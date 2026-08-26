@@ -22,8 +22,8 @@ which consumes the `alarm_arns` output from this module.
 | ALB latency | `AWS/ApplicationELB` `TargetResponseTime` (p95) | warn (>=1s) / crit (>=3s) |
 | EC2 CPU utilization | `AWS/EC2` `CPUUtilization` (native, both OS) | warn (>=70%, 10min) / crit (>=85%, 5min) |
 | EC2 memory utilization | `CWAgent` `mem_used_percent` (Linux) / `Memory % Committed Bytes In Use` (Windows) | warn (>=75%, 10min) / crit (>=90%, 5min) |
-| EC2 disk usage | `CWAgent` `disk_used_percent` (Linux) / `LogicalDisk % Free Space` (Windows, inverted) | warn (>=75%) / crit (>=90%) |
-| EC2 disk I/O wait | `CWAgent` `diskio_io_time` via metric math (Linux) / `PhysicalDisk % Disk Time` (Windows) | warn (>=20%) / crit (>=40%) |
+| EC2 disk usage | `CWAgent` `LogicalDisk % Free Space` (Windows only, inverted) | warn (>=75%) / crit (>=90%) |
+| EC2 disk I/O wait | `CWAgent` `PhysicalDisk % Disk Time` on the `_Total` aggregate (Windows only) | warn (>=20%) / crit (>=40%) |
 | EC2 network interface errors | `CWAgent` `Packets Received/Outbound Errors` (Windows only) | warn / crit (configurable counts) |
 | EC2 status check failed | `AWS/EC2` `StatusCheckFailed` | single tier |
 | Lambda error rate | `AWS/Lambda` `Errors`/`Invocations` (metric math) | warn (>=1%) / crit (>=5%) |
@@ -47,22 +47,30 @@ CPU utilization and status-check-failed are native `AWS/EC2` metrics and need
 nothing extra. Memory, disk usage, disk I/O wait, and network interface
 errors are all `CWAgent` metrics — the target instance needs
 [`msi-terraform-cloudwatch-agent`](https://github.com/MemberSolutionsInc/msi-terraform-cloudwatch-agent)
-(`>= v0.2.1`, for the `append_dimensions`/`drop_device` fixes) deployed with
-a matching `os_type` first, or these alarms will sit in `INSUFFICIENT_DATA`
-indefinitely. Each `ec2_instances` entry's `os_type` and `disk_resources`
-must match what you passed to that instance's agent module invocation.
+(`>= v0.2.3`) deployed with a matching `os_type` first, or these alarms will
+sit in `INSUFFICIENT_DATA` indefinitely. Each `ec2_instances` entry's
+`os_type` and `disk_resources` must match what you passed to that instance's
+agent module invocation.
 
-Linux and Windows disk/disk-I/O metrics use different underlying schemas and
-some values (Linux disk `fstype`, Windows `PhysicalDisk` instance names,
-Linux `diskio` device names) aren't knowable from Terraform ahead of time —
-disk usage handles this with a `SEARCH()`-based metric query on Linux, and
-disk I/O wait uses `MAX(SEARCH(...))` on both OSes to alarm on whichever
-disk/device is busiest, rather than requiring an exact dimension match.
+### Disk usage, disk I/O wait, and network errors are Windows-only for now
 
-Network error alarms are Windows-only for now — `msi-terraform-cloudwatch-agent`
-doesn't collect Linux network error counters yet. Setting
-`enable_network_errors = true` on a Linux entry is a no-op (no alarm
-created).
+CloudWatch metric alarms cannot use the `SEARCH()` function at all
+(confirmed live: `ValidationError: SEARCH is not supported on Metric
+Alarms`) — an earlier version of this module tried to use it to work around
+not knowing Linux `fstype`/device names or Windows `PhysicalDisk` instance
+names ahead of time. That doesn't work, full stop; SEARCH is dashboard/
+anomaly-detection-only.
+
+Windows disk I/O wait is solved instead by having
+`msi-terraform-cloudwatch-agent` collect PhysicalDisk's well-known `_Total`
+aggregate instance rather than a per-disk name — a fixed, predictable
+dimension value a plain alarm can target directly. There's no equivalent
+aggregate for Linux `diskio` (or a stand-in for its unpredictable `fstype`
+dimension on `disk_used_percent`), so **disk usage, disk I/O wait, and
+network interface errors are all Windows-only** (`enable_diskio`/
+`enable_network_errors = true` on a Linux entry, or a Linux entry in
+`disk_resources`, is a no-op — no alarm created). CPU and memory work on
+both OSes.
 
 ## Mandatory tagging
 
@@ -112,10 +120,11 @@ module "cloudwatch_alarms" {
   }
 
   ec2_instances = {
+    # Linux: CPU + memory + status-check only — disk usage/I-O-wait/network
+    # errors are Windows-only for now (see README).
     checkout_host = {
-      instance_id    = "i-0123456789abcdef0"
-      os_type        = "linux"
-      disk_resources = ["/", "/data"]
+      instance_id = "i-0123456789abcdef0"
+      os_type     = "linux"
     }
     app3_prod_d = {
       instance_id            = "i-0fad170ef80facf91"
