@@ -20,6 +20,11 @@ which consumes the `alarm_arns` output from this module.
 | ECS container restarts | `ECS/ContainerInsights` `RestartCount` | warn (>=3/10min) / crit (>=5/10min) |
 | ALB 5xx errors | `AWS/ApplicationELB` `HTTPCode_ELB_5XX_Count` | warn / crit (configurable counts) |
 | ALB latency | `AWS/ApplicationELB` `TargetResponseTime` (p95) | warn (>=1s) / crit (>=3s) |
+| EC2 CPU utilization | `AWS/EC2` `CPUUtilization` (native, both OS) | warn (>=70%, 10min) / crit (>=85%, 5min) |
+| EC2 memory utilization | `CWAgent` `mem_used_percent` (Linux) / `Memory % Committed Bytes In Use` (Windows) | warn (>=75%, 10min) / crit (>=90%, 5min) |
+| EC2 disk usage | `CWAgent` `disk_used_percent` (Linux) / `LogicalDisk % Free Space` (Windows, inverted) | warn (>=75%) / crit (>=90%) |
+| EC2 disk I/O wait | `CWAgent` `diskio_io_time` via metric math (Linux) / `PhysicalDisk % Disk Time` (Windows) | warn (>=20%) / crit (>=40%) |
+| EC2 network interface errors | `CWAgent` `Packets Received/Outbound Errors` (Windows only) | warn / crit (configurable counts) |
 | EC2 status check failed | `AWS/EC2` `StatusCheckFailed` | single tier |
 | Lambda error rate | `AWS/Lambda` `Errors`/`Invocations` (metric math) | warn (>=1%) / crit (>=5%) |
 | Lambda duration | `AWS/Lambda` `Duration` (p95, % of timeout) | warn (>=75%) / crit (>=90%) |
@@ -35,6 +40,29 @@ overridden per-caller via the threshold variables in `variables.tf`.
 rate, so `alb_5xx_warn_threshold_count` / `alb_5xx_crit_threshold_count` are
 counts per evaluation window. Tune them per ALB traffic volume to approximate
 the org's warn ~1% / crit ~5% error-rate guidance.
+
+### EC2 memory/disk/disk-I/O/network-error alarms require the CloudWatch Agent
+
+CPU utilization and status-check-failed are native `AWS/EC2` metrics and need
+nothing extra. Memory, disk usage, disk I/O wait, and network interface
+errors are all `CWAgent` metrics — the target instance needs
+[`msi-terraform-cloudwatch-agent`](https://github.com/MemberSolutionsInc/msi-terraform-cloudwatch-agent)
+(`>= v0.2.1`, for the `append_dimensions`/`drop_device` fixes) deployed with
+a matching `os_type` first, or these alarms will sit in `INSUFFICIENT_DATA`
+indefinitely. Each `ec2_instances` entry's `os_type` and `disk_resources`
+must match what you passed to that instance's agent module invocation.
+
+Linux and Windows disk/disk-I/O metrics use different underlying schemas and
+some values (Linux disk `fstype`, Windows `PhysicalDisk` instance names,
+Linux `diskio` device names) aren't knowable from Terraform ahead of time —
+disk usage handles this with a `SEARCH()`-based metric query on Linux, and
+disk I/O wait uses `MAX(SEARCH(...))` on both OSes to alarm on whichever
+disk/device is busiest, rather than requiring an exact dimension match.
+
+Network error alarms are Windows-only for now — `msi-terraform-cloudwatch-agent`
+doesn't collect Linux network error counters yet. Setting
+`enable_network_errors = true` on a Linux entry is a no-op (no alarm
+created).
 
 ## Mandatory tagging
 
@@ -83,7 +111,19 @@ module "cloudwatch_alarms" {
     }
   }
 
-  ec2_instance_ids = ["i-0123456789abcdef0"]
+  ec2_instances = {
+    checkout_host = {
+      instance_id    = "i-0123456789abcdef0"
+      os_type        = "linux"
+      disk_resources = ["/", "/data"]
+    }
+    app3_prod_d = {
+      instance_id            = "i-0fad170ef80facf91"
+      os_type                = "windows"
+      disk_resources         = ["C:"]
+      enable_network_errors  = true
+    }
+  }
 
   lambda_functions = {
     image_resize = {
@@ -103,7 +143,7 @@ module "cloudwatch_alarms" {
 | `sns_topic_arns` | SNS topic ARNs for alarm/OK actions by severity | `object` | n/a | yes |
 | `ecs_clusters` | ECS clusters/services to monitor | `map(object)` | n/a | yes |
 | `albs` | ALBs to monitor | `map(object)` | n/a | yes |
-| `ec2_instance_ids` | EC2 instance IDs to monitor | `list(string)` | n/a | yes |
+| `ec2_instances` | EC2 instances to monitor (instance_id, os_type, disk_resources, enable_memory/diskio/network_errors) | `map(object)` | `{}` | no |
 | `lambda_functions` | Lambda functions to monitor | `map(object)` | n/a | yes |
 | `ecs_cpu_warn_threshold_percent` | ECS CPU warn threshold | `number` | `70` | no |
 | `ecs_cpu_warn_evaluation_minutes` | ECS CPU warn evaluation window (minutes) | `number` | `10` | no |
@@ -124,6 +164,27 @@ module "cloudwatch_alarms" {
 | `alb_latency_evaluation_periods` | ALB latency number of periods | `number` | `5` | no |
 | `alb_latency_warn_threshold_seconds` | ALB p95 latency warn threshold (seconds) | `number` | `1` | no |
 | `alb_latency_crit_threshold_seconds` | ALB p95 latency crit threshold (seconds) | `number` | `3` | no |
+| `ec2_cpu_warn_threshold_percent` | EC2 CPU warn threshold | `number` | `70` | no |
+| `ec2_cpu_warn_evaluation_minutes` | EC2 CPU warn evaluation window (minutes) | `number` | `10` | no |
+| `ec2_cpu_crit_threshold_percent` | EC2 CPU crit threshold | `number` | `85` | no |
+| `ec2_cpu_crit_evaluation_minutes` | EC2 CPU crit evaluation window (minutes) | `number` | `5` | no |
+| `ec2_memory_warn_threshold_percent` | EC2 memory warn threshold | `number` | `75` | no |
+| `ec2_memory_warn_evaluation_minutes` | EC2 memory warn evaluation window (minutes) | `number` | `10` | no |
+| `ec2_memory_crit_threshold_percent` | EC2 memory crit threshold | `number` | `90` | no |
+| `ec2_memory_crit_evaluation_minutes` | EC2 memory crit evaluation window (minutes) | `number` | `5` | no |
+| `ec2_disk_warn_threshold_percent` | EC2 disk usage warn threshold (used %) | `number` | `75` | no |
+| `ec2_disk_warn_evaluation_periods` | EC2 disk usage warn number of periods | `number` | `5` | no |
+| `ec2_disk_crit_threshold_percent` | EC2 disk usage crit threshold (used %) | `number` | `90` | no |
+| `ec2_disk_crit_evaluation_periods` | EC2 disk usage crit number of periods | `number` | `3` | no |
+| `ec2_disk_period_seconds` | EC2 disk usage evaluation window (seconds) | `number` | `60` | no |
+| `ec2_diskio_warn_threshold_percent` | EC2 disk I/O wait warn threshold (%) | `number` | `20` | no |
+| `ec2_diskio_crit_threshold_percent` | EC2 disk I/O wait crit threshold (%) | `number` | `40` | no |
+| `ec2_diskio_period_seconds` | EC2 disk I/O wait evaluation window (seconds) | `number` | `60` | no |
+| `ec2_diskio_evaluation_periods` | EC2 disk I/O wait number of periods | `number` | `5` | no |
+| `ec2_network_errors_period_seconds` | EC2 network errors evaluation window (seconds) | `number` | `300` | no |
+| `ec2_network_errors_evaluation_periods` | EC2 network errors number of periods | `number` | `2` | no |
+| `ec2_network_errors_warn_threshold_count` | EC2 network errors warn threshold (count) | `number` | `1` | no |
+| `ec2_network_errors_crit_threshold_count` | EC2 network errors crit threshold (count) | `number` | `10` | no |
 | `ec2_status_check_period_seconds` | EC2 status check evaluation window (seconds) | `number` | `60` | no |
 | `ec2_status_check_evaluation_periods` | EC2 status check number of periods | `number` | `2` | no |
 | `lambda_error_rate_period_seconds` | Lambda error rate evaluation window (seconds) | `number` | `300` | no |
