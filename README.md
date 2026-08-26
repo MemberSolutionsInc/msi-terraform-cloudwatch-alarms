@@ -47,10 +47,34 @@ CPU utilization and status-check-failed are native `AWS/EC2` metrics and need
 nothing extra. Memory, disk usage, disk I/O wait, and network interface
 errors are all `CWAgent` metrics — the target instance needs
 [`msi-terraform-cloudwatch-agent`](https://github.com/MemberSolutionsInc/msi-terraform-cloudwatch-agent)
-(`>= v0.2.3`) deployed with a matching `os_type` first, or these alarms will
+(`>= v0.2.4`) deployed with a matching `os_type` first, or these alarms will
 sit in `INSUFFICIENT_DATA` indefinitely. Each `ec2_instances` entry's
 `os_type` and `disk_resources` must match what you passed to that instance's
 agent module invocation.
+
+### Windows CWAgent metrics need ImageId/InstanceType/objectname dimensions too
+
+Confirmed live: on Windows, every performance-counter metric CWAgent
+publishes carries `ImageId` and `InstanceType` dimensions automatically —
+in addition to whatever `append_dimensions` the agent config sets — plus an
+`objectname` dimension naming the source perfmon object (`Memory`,
+`LogicalDisk`, `PhysicalDisk`, `Network Interface`). CloudWatch alarms
+require an *exact* dimension-set match, so an alarm dimensioned with only
+`{InstanceId}` (or `{InstanceId, instance}`) never matches real data —
+observed as `INSUFFICIENT_DATA` forever even while the metric was actively
+publishing every minute. This module looks up each Windows instance's
+`ami`/`instance_type` via a `data "aws_instance"` and includes them plus
+the correct `objectname` in every Windows CWAgent-based alarm's
+dimensions. Linux CWAgent doesn't have this behavior (dimensions there are
+exactly whatever `append_dimensions` configures).
+
+The `Network Interface` object is likely also multi-instance like
+`PhysicalDisk` (i.e. probably carries a per-adapter `instance` dimension),
+but this hasn't been confirmed live yet — the metric had never
+successfully published data as of writing. The network-errors alarms here
+deliberately omit an `instance` dimension for now; if live data shows one
+is needed, that'll require the same kind of fix disk I/O wait got
+(`_Total`-style aggregate, if `Network Interface` has one — unconfirmed).
 
 ### Disk usage, disk I/O wait, and network errors are Windows-only for now
 
