@@ -39,12 +39,30 @@ locals {
   ec2_disk_pairs = merge([
     for k, v in var.ec2_instances : v.os_type != "windows" ? {} : {
       for dr in v.disk_resources : "${k}-${replace(dr, ":", "")}" => {
-        instance_id = v.instance_id
-        os_type     = v.os_type
-        disk        = dr
+        instance_key = k
+        instance_id  = v.instance_id
+        os_type      = v.os_type
+        disk         = dr
       }
     }
   ]...)
+
+  # Windows CWAgent always appends ImageId/InstanceType/objectname to every
+  # performance-counter metric, in addition to whatever append_dimensions
+  # the agent config sets — confirmed live: alarms dimensioned with just
+  # {InstanceId} (or {InstanceId, instance} for per-resource metrics) never
+  # matched any data and sat in INSUFFICIENT_DATA indefinitely, even though
+  # the underlying metric was actively publishing. objectname is a fixed
+  # string per Windows performance object (Memory/LogicalDisk/PhysicalDisk);
+  # ImageId/InstanceType vary per instance and aren't knowable without a
+  # lookup.
+  ec2_windows_instance_ids = { for k, v in var.ec2_instances : k => v.instance_id if v.os_type == "windows" }
+}
+
+data "aws_instance" "windows_target" {
+  for_each = local.ec2_windows_instance_ids
+
+  instance_id = each.value
 }
 
 ###############################################################################
@@ -414,7 +432,12 @@ module "ec2_memory_utilization_warn" {
   threshold           = var.ec2_memory_warn_threshold_percent
   treat_missing_data  = "missing"
 
-  dimensions = {
+  dimensions = each.value.os_type == "windows" ? {
+    InstanceId   = each.value.instance_id
+    ImageId      = data.aws_instance.windows_target[each.key].ami
+    InstanceType = data.aws_instance.windows_target[each.key].instance_type
+    objectname   = "Memory"
+    } : {
     InstanceId = each.value.instance_id
   }
 
@@ -440,7 +463,12 @@ module "ec2_memory_utilization_crit" {
   threshold           = var.ec2_memory_crit_threshold_percent
   treat_missing_data  = "missing"
 
-  dimensions = {
+  dimensions = each.value.os_type == "windows" ? {
+    InstanceId   = each.value.instance_id
+    ImageId      = data.aws_instance.windows_target[each.key].ami
+    InstanceType = data.aws_instance.windows_target[each.key].instance_type
+    objectname   = "Memory"
+    } : {
     InstanceId = each.value.instance_id
   }
 
@@ -474,8 +502,11 @@ module "ec2_disk_usage_warn" {
   treat_missing_data  = "missing"
 
   dimensions = {
-    InstanceId = each.value.instance_id
-    instance   = each.value.disk
+    InstanceId   = each.value.instance_id
+    ImageId      = data.aws_instance.windows_target[each.value.instance_key].ami
+    InstanceType = data.aws_instance.windows_target[each.value.instance_key].instance_type
+    objectname   = "LogicalDisk"
+    instance     = each.value.disk
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
@@ -501,8 +532,11 @@ module "ec2_disk_usage_crit" {
   treat_missing_data  = "missing"
 
   dimensions = {
-    InstanceId = each.value.instance_id
-    instance   = each.value.disk
+    InstanceId   = each.value.instance_id
+    ImageId      = data.aws_instance.windows_target[each.value.instance_key].ami
+    InstanceType = data.aws_instance.windows_target[each.value.instance_key].instance_type
+    objectname   = "LogicalDisk"
+    instance     = each.value.disk
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
@@ -536,8 +570,11 @@ module "ec2_diskio_warn" {
   treat_missing_data  = "missing"
 
   dimensions = {
-    InstanceId = each.value.instance_id
-    instance   = "_Total"
+    InstanceId   = each.value.instance_id
+    ImageId      = data.aws_instance.windows_target[each.key].ami
+    InstanceType = data.aws_instance.windows_target[each.key].instance_type
+    objectname   = "PhysicalDisk"
+    instance     = "_Total"
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
@@ -563,8 +600,11 @@ module "ec2_diskio_crit" {
   treat_missing_data  = "missing"
 
   dimensions = {
-    InstanceId = each.value.instance_id
-    instance   = "_Total"
+    InstanceId   = each.value.instance_id
+    ImageId      = data.aws_instance.windows_target[each.key].ami
+    InstanceType = data.aws_instance.windows_target[each.key].instance_type
+    objectname   = "PhysicalDisk"
+    instance     = "_Total"
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
@@ -606,8 +646,18 @@ module "ec2_network_errors_warn" {
         namespace   = "CWAgent"
         period      = var.ec2_network_errors_period_seconds
         stat        = "Sum"
+        # ImageId/InstanceType/objectname: confirmed Windows CWAgent behavior
+        # (see ec2_memory/ec2_disk_usage/ec2_diskio). The "instance" (network
+        # adapter name) dimension is NOT included here — unconfirmed live,
+        # since this metric has never actually published data yet. If the
+        # real metric turns out to carry an "instance" dimension too (likely,
+        # given every other multi-instance Windows perfmon object does),
+        # this alarm won't match until that's added once known.
         dimensions = {
-          InstanceId = each.value.instance_id
+          InstanceId   = each.value.instance_id
+          ImageId      = data.aws_instance.windows_target[each.key].ami
+          InstanceType = data.aws_instance.windows_target[each.key].instance_type
+          objectname   = "Network Interface"
         }
       }]
     },
@@ -619,7 +669,10 @@ module "ec2_network_errors_warn" {
         period      = var.ec2_network_errors_period_seconds
         stat        = "Sum"
         dimensions = {
-          InstanceId = each.value.instance_id
+          InstanceId   = each.value.instance_id
+          ImageId      = data.aws_instance.windows_target[each.key].ami
+          InstanceType = data.aws_instance.windows_target[each.key].instance_type
+          objectname   = "Network Interface"
         }
       }]
     },
@@ -657,8 +710,18 @@ module "ec2_network_errors_crit" {
         namespace   = "CWAgent"
         period      = var.ec2_network_errors_period_seconds
         stat        = "Sum"
+        # ImageId/InstanceType/objectname: confirmed Windows CWAgent behavior
+        # (see ec2_memory/ec2_disk_usage/ec2_diskio). The "instance" (network
+        # adapter name) dimension is NOT included here — unconfirmed live,
+        # since this metric has never actually published data yet. If the
+        # real metric turns out to carry an "instance" dimension too (likely,
+        # given every other multi-instance Windows perfmon object does),
+        # this alarm won't match until that's added once known.
         dimensions = {
-          InstanceId = each.value.instance_id
+          InstanceId   = each.value.instance_id
+          ImageId      = data.aws_instance.windows_target[each.key].ami
+          InstanceType = data.aws_instance.windows_target[each.key].instance_type
+          objectname   = "Network Interface"
         }
       }]
     },
@@ -670,7 +733,10 @@ module "ec2_network_errors_crit" {
         period      = var.ec2_network_errors_period_seconds
         stat        = "Sum"
         dimensions = {
-          InstanceId = each.value.instance_id
+          InstanceId   = each.value.instance_id
+          ImageId      = data.aws_instance.windows_target[each.key].ami
+          InstanceType = data.aws_instance.windows_target[each.key].instance_type
+          objectname   = "Network Interface"
         }
       }]
     },
