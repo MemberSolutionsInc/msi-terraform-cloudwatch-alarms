@@ -479,6 +479,7 @@ module "ec2_disk_usage_warn" {
       id          = "disk_used"
       expression  = "SEARCH('{CWAgent,InstanceId,path} MetricName=\"disk_used_percent\" InstanceId=\"${each.value.instance_id}\" path=\"${each.value.disk}\"', 'Average', ${var.ec2_disk_period_seconds})"
       label       = "DiskUsedPercent-${each.value.disk}"
+      period      = var.ec2_disk_period_seconds
       return_data = "true"
     },
   ]
@@ -516,6 +517,7 @@ module "ec2_disk_usage_crit" {
       id          = "disk_used"
       expression  = "SEARCH('{CWAgent,InstanceId,path} MetricName=\"disk_used_percent\" InstanceId=\"${each.value.instance_id}\" path=\"${each.value.disk}\"', 'Average', ${var.ec2_disk_period_seconds})"
       label       = "DiskUsedPercent-${each.value.disk}"
+      period      = var.ec2_disk_period_seconds
       return_data = "true"
     },
   ]
@@ -557,6 +559,7 @@ module "ec2_diskio_warn" {
       id          = "io_wait"
       expression  = "MAX(SEARCH('{CWAgent,InstanceId} MetricName=\"% Disk Time\" InstanceId=\"${each.value.instance_id}\"', 'Average', ${var.ec2_diskio_period_seconds}))"
       label       = "DiskIOWaitPercent"
+      period      = var.ec2_diskio_period_seconds
       return_data = "true"
     },
     ] : [
@@ -564,12 +567,14 @@ module "ec2_diskio_warn" {
       id          = "io_ms"
       expression  = "MAX(SEARCH('{CWAgent,InstanceId} MetricName=\"diskio_io_time\" InstanceId=\"${each.value.instance_id}\"', 'Sum', ${var.ec2_diskio_period_seconds}))"
       label       = "DiskIOBusyMs"
+      period      = var.ec2_diskio_period_seconds
       return_data = "false"
     },
     {
       id          = "io_wait"
       expression  = "(io_ms / (${var.ec2_diskio_period_seconds} * 1000)) * 100"
       label       = "DiskIOWaitPercent"
+      period      = null
       return_data = "true"
     },
   ]
@@ -597,6 +602,7 @@ module "ec2_diskio_crit" {
       id          = "io_wait"
       expression  = "MAX(SEARCH('{CWAgent,InstanceId} MetricName=\"% Disk Time\" InstanceId=\"${each.value.instance_id}\"', 'Average', ${var.ec2_diskio_period_seconds}))"
       label       = "DiskIOWaitPercent"
+      period      = var.ec2_diskio_period_seconds
       return_data = "true"
     },
     ] : [
@@ -604,12 +610,14 @@ module "ec2_diskio_crit" {
       id          = "io_ms"
       expression  = "MAX(SEARCH('{CWAgent,InstanceId} MetricName=\"diskio_io_time\" InstanceId=\"${each.value.instance_id}\"', 'Sum', ${var.ec2_diskio_period_seconds}))"
       label       = "DiskIOBusyMs"
+      period      = var.ec2_diskio_period_seconds
       return_data = "false"
     },
     {
       id          = "io_wait"
       expression  = "(io_ms / (${var.ec2_diskio_period_seconds} * 1000)) * 100"
       label       = "DiskIOWaitPercent"
+      period      = null
       return_data = "true"
     },
   ]
@@ -647,24 +655,28 @@ module "ec2_network_errors_warn" {
       return_data = "true"
     },
     {
-      id          = "received_errors"
-      metric_name = "Packets Received Errors"
-      namespace   = "CWAgent"
-      period      = var.ec2_network_errors_period_seconds
-      stat        = "Sum"
-      dimensions = {
-        InstanceId = each.value.instance_id
-      }
+      id = "received_errors"
+      metric = [{
+        metric_name = "Packets Received Errors"
+        namespace   = "CWAgent"
+        period      = var.ec2_network_errors_period_seconds
+        stat        = "Sum"
+        dimensions = {
+          InstanceId = each.value.instance_id
+        }
+      }]
     },
     {
-      id          = "outbound_errors"
-      metric_name = "Packets Outbound Errors"
-      namespace   = "CWAgent"
-      period      = var.ec2_network_errors_period_seconds
-      stat        = "Sum"
-      dimensions = {
-        InstanceId = each.value.instance_id
-      }
+      id = "outbound_errors"
+      metric = [{
+        metric_name = "Packets Outbound Errors"
+        namespace   = "CWAgent"
+        period      = var.ec2_network_errors_period_seconds
+        stat        = "Sum"
+        dimensions = {
+          InstanceId = each.value.instance_id
+        }
+      }]
     },
   ]
 
@@ -694,24 +706,28 @@ module "ec2_network_errors_crit" {
       return_data = "true"
     },
     {
-      id          = "received_errors"
-      metric_name = "Packets Received Errors"
-      namespace   = "CWAgent"
-      period      = var.ec2_network_errors_period_seconds
-      stat        = "Sum"
-      dimensions = {
-        InstanceId = each.value.instance_id
-      }
+      id = "received_errors"
+      metric = [{
+        metric_name = "Packets Received Errors"
+        namespace   = "CWAgent"
+        period      = var.ec2_network_errors_period_seconds
+        stat        = "Sum"
+        dimensions = {
+          InstanceId = each.value.instance_id
+        }
+      }]
     },
     {
-      id          = "outbound_errors"
-      metric_name = "Packets Outbound Errors"
-      namespace   = "CWAgent"
-      period      = var.ec2_network_errors_period_seconds
-      stat        = "Sum"
-      dimensions = {
-        InstanceId = each.value.instance_id
-      }
+      id = "outbound_errors"
+      metric = [{
+        metric_name = "Packets Outbound Errors"
+        namespace   = "CWAgent"
+        period      = var.ec2_network_errors_period_seconds
+        stat        = "Sum"
+        dimensions = {
+          InstanceId = each.value.instance_id
+        }
+      }]
     },
   ]
 
@@ -778,24 +794,28 @@ module "lambda_error_rate_warn" {
       return_data = "true"
     },
     {
-      id          = "invocations"
-      metric_name = "Invocations"
-      namespace   = "AWS/Lambda"
-      period      = var.lambda_error_rate_period_seconds
-      stat        = "Sum"
-      dimensions = {
-        FunctionName = each.value.function_name
-      }
+      id = "invocations"
+      metric = [{
+        metric_name = "Invocations"
+        namespace   = "AWS/Lambda"
+        period      = var.lambda_error_rate_period_seconds
+        stat        = "Sum"
+        dimensions = {
+          FunctionName = each.value.function_name
+        }
+      }]
     },
     {
-      id          = "errors"
-      metric_name = "Errors"
-      namespace   = "AWS/Lambda"
-      period      = var.lambda_error_rate_period_seconds
-      stat        = "Sum"
-      dimensions = {
-        FunctionName = each.value.function_name
-      }
+      id = "errors"
+      metric = [{
+        metric_name = "Errors"
+        namespace   = "AWS/Lambda"
+        period      = var.lambda_error_rate_period_seconds
+        stat        = "Sum"
+        dimensions = {
+          FunctionName = each.value.function_name
+        }
+      }]
     },
   ]
 
@@ -825,24 +845,28 @@ module "lambda_error_rate_crit" {
       return_data = "true"
     },
     {
-      id          = "invocations"
-      metric_name = "Invocations"
-      namespace   = "AWS/Lambda"
-      period      = var.lambda_error_rate_period_seconds
-      stat        = "Sum"
-      dimensions = {
-        FunctionName = each.value.function_name
-      }
+      id = "invocations"
+      metric = [{
+        metric_name = "Invocations"
+        namespace   = "AWS/Lambda"
+        period      = var.lambda_error_rate_period_seconds
+        stat        = "Sum"
+        dimensions = {
+          FunctionName = each.value.function_name
+        }
+      }]
     },
     {
-      id          = "errors"
-      metric_name = "Errors"
-      namespace   = "AWS/Lambda"
-      period      = var.lambda_error_rate_period_seconds
-      stat        = "Sum"
-      dimensions = {
-        FunctionName = each.value.function_name
-      }
+      id = "errors"
+      metric = [{
+        metric_name = "Errors"
+        namespace   = "AWS/Lambda"
+        period      = var.lambda_error_rate_period_seconds
+        stat        = "Sum"
+        dimensions = {
+          FunctionName = each.value.function_name
+        }
+      }]
     },
   ]
 
