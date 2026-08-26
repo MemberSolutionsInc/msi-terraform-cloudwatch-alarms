@@ -84,18 +84,17 @@ variable "ec2_instances" {
     - `instance_id`: the EC2 InstanceId CloudWatch dimension value. Always
       gets CPU utilization and status-check-failed alarms (both native
       AWS/EC2 metrics, no CloudWatch Agent required).
-    - `os_type` (`"linux"` or `"windows"`): selects the CWAgent metric
-      names/dimensions used for memory, disk, and disk I/O wait. Must match
-      the `os_type` passed to this same instance's
-      msi-terraform-cloudwatch-agent invocation.
-    - `disk_resources`: CWAgent disk identifiers to alarm on (Linux: mount
-      paths, e.g. `["/"]`; Windows: drive letters, e.g. `["C:"]`) — must
-      match that instance's `mount_paths`/`windows_disk_resources` in the
-      agent module. Leave empty to skip disk-usage alarms for this instance
-      (e.g. CloudWatch Agent not deployed yet).
-    - `enable_memory` / `enable_diskio`: independently gate the memory and
-      disk-I/O-wait alarms, for the same reason (CWAgent metric
-      availability) — default `true`.
+    - `os_type` (`"linux"` or `"windows"`): selects the CWAgent metric name
+      used for memory. Must match the `os_type` passed to this same
+      instance's msi-terraform-cloudwatch-agent invocation.
+    - `disk_resources`: Windows drive letters to alarm disk usage on (e.g.
+      `["C:"]`) — must match that instance's `windows_disk_resources` in the
+      agent module. Ignored on Linux (CloudWatch alarms can't use SEARCH(),
+      so there's no way to alarm on Linux's unpredictable `fstype`
+      dimension — see README).
+    - `enable_memory`: gates the memory alarm (works on both OSes).
+      `enable_diskio`: gates the disk-I/O-wait alarm — Windows only (see
+      README), ignored on Linux. Both default `true`.
     - `enable_network_errors`: gates the network-error-counter alarm.
       Windows only for now — msi-terraform-cloudwatch-agent doesn't collect
       Linux network error counters yet, so this is ignored (no alarm
@@ -338,11 +337,11 @@ variable "ec2_memory_crit_evaluation_minutes" {
 }
 
 ###############################################################################
-# Threshold configuration - EC2 disk usage (CWAgent; one alarm per instance
-# per disk_resources entry). Linux disk_used_percent is a "used" percentage;
-# Windows LogicalDisk "% Free Space" is inverted, so the module flips both
-# the comparison operator and the threshold (100 - used_threshold) for
-# Windows instances rather than exposing separate free-space variables.
+# Threshold configuration - EC2 disk usage (CWAgent LogicalDisk, Windows
+# only — see ec2_instances/README). "% Free Space" is inverted relative to
+# a "used" percentage, so the module flips both the comparison operator and
+# the threshold (100 - used_threshold) rather than exposing a separate
+# free-space variable.
 ###############################################################################
 
 variable "ec2_disk_warn_threshold_percent" {
@@ -376,14 +375,9 @@ variable "ec2_disk_period_seconds" {
 }
 
 ###############################################################################
-# Threshold configuration - EC2 disk I/O wait.
-#
-# Windows PhysicalDisk "% Disk Time" is already a percentage — used
-# directly. Linux diskio_io_time is a cumulative millisecond counter, not a
-# percentage, so the module derives one via metric math:
-#   (diskio_io_time_sum_over_period / (period_seconds * 1000)) * 100
-# i.e. the fraction of the evaluation window the disk spent busy. Both OSes
-# compare against the same warn/crit percentages below.
+# Threshold configuration - EC2 disk I/O wait (CWAgent PhysicalDisk
+# "% Disk Time" on the "_Total" aggregate instance, Windows only — see
+# ec2_instances/README). Already a percentage, used directly.
 ###############################################################################
 
 variable "ec2_diskio_warn_threshold_percent" {

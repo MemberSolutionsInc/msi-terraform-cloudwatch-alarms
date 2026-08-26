@@ -18,15 +18,26 @@ locals {
   tags_warn = merge(var.tags, { severity = "warning" })
   tags_crit = merge(var.tags, { severity = "critical" })
 
-  ec2_memory_instances         = { for k, v in var.ec2_instances : k => v if v.enable_memory }
-  ec2_diskio_instances         = { for k, v in var.ec2_instances : k => v if v.enable_diskio }
+  ec2_memory_instances = { for k, v in var.ec2_instances : k => v if v.enable_memory }
+
+  # Windows only, for both: CloudWatch alarms can't use SEARCH() (confirmed
+  # live: "ValidationError: SEARCH is not supported on Metric Alarms"), so
+  # an alarm needs a dimension value known ahead of time. Windows disk I/O
+  # wait uses PhysicalDisk's well-known "_Total" aggregate instance
+  # (msi-terraform-cloudwatch-agent >= v0.2.3); Linux diskio has no such
+  # aggregate (device names are per-instance and unpredictable), so it's
+  # not supported here yet.
+  ec2_diskio_instances         = { for k, v in var.ec2_instances : k => v if v.enable_diskio && v.os_type == "windows" }
   ec2_network_errors_instances = { for k, v in var.ec2_instances : k => v if v.enable_network_errors && v.os_type == "windows" }
 
   # One entry per (instance, disk_resources entry) pair, for disk-usage
-  # alarms. Windows drive letters contain ":" which isn't valid in a map
+  # alarms. Windows only, for the same SEARCH() reason as diskio above —
+  # Linux disk_used_percent carries an fstype dimension whose value isn't
+  # knowable from Terraform, and there's no "_Total"-style aggregate for it.
+  # Windows drive letters contain ":" which isn't valid in a map
   # key/alarm-name segment, so it's stripped there.
   ec2_disk_pairs = merge([
-    for k, v in var.ec2_instances : {
+    for k, v in var.ec2_instances : v.os_type != "windows" ? {} : {
       for dr in v.disk_resources : "${k}-${replace(dr, ":", "")}" => {
         instance_id = v.instance_id
         os_type     = v.os_type
@@ -440,16 +451,10 @@ module "ec2_memory_utilization_crit" {
 }
 
 ###############################################################################
-# EC2 disk usage - CWAgent, one alarm per (instance, disk_resources entry).
-#
-# Windows LogicalDisk "% Free Space" is inverted relative to Linux
-# disk_used_percent (free, not used), so the comparison operator and
-# threshold (100 - used_threshold) are flipped for Windows. Windows
-# dimensions are fully known ahead of time (InstanceId + the drive letter we
-# configured). Linux disk_used_percent also carries an unpredictable
-# "fstype" dimension even with drop_device=true on the agent side, so the
-# Linux alarm uses a SEARCH expression matching on {InstanceId, path} only,
-# rather than a fixed dimension set that might not match.
+# EC2 disk usage - CWAgent LogicalDisk "% Free Space", one alarm per
+# (instance, disk_resources entry). Windows only — see ec2_disk_pairs.
+# "% Free Space" is inverted relative to a "used" percentage, so the
+# comparison operator and threshold (100 - used_threshold) are flipped.
 ###############################################################################
 
 module "ec2_disk_usage_warn" {
@@ -459,30 +464,19 @@ module "ec2_disk_usage_warn" {
 
   alarm_name          = "HighDiskUsage-Warn-${each.key}"
   alarm_description   = "Triggers if EC2 instance ${each.value.instance_id} disk ${each.value.disk} exceeds ${var.ec2_disk_warn_threshold_percent}% used"
-  comparison_operator = each.value.os_type == "windows" ? "LessThanOrEqualToThreshold" : "GreaterThanOrEqualToThreshold"
+  comparison_operator = "LessThanOrEqualToThreshold"
+  metric_name         = "LogicalDisk % Free Space"
+  namespace           = "CWAgent"
+  period              = var.ec2_disk_period_seconds
+  statistic           = "Average"
   evaluation_periods  = var.ec2_disk_warn_evaluation_periods
-  threshold           = each.value.os_type == "windows" ? (100 - var.ec2_disk_warn_threshold_percent) : var.ec2_disk_warn_threshold_percent
+  threshold           = 100 - var.ec2_disk_warn_threshold_percent
   treat_missing_data  = "missing"
 
-  dimensions = each.value.os_type == "windows" ? {
+  dimensions = {
     InstanceId = each.value.instance_id
     instance   = each.value.disk
-  } : null
-
-  metric_name = each.value.os_type == "windows" ? "LogicalDisk % Free Space" : null
-  namespace   = each.value.os_type == "windows" ? "CWAgent" : null
-  period      = each.value.os_type == "windows" ? var.ec2_disk_period_seconds : null
-  statistic   = each.value.os_type == "windows" ? "Average" : null
-
-  metric_query = each.value.os_type == "windows" ? [] : [
-    {
-      id          = "disk_used"
-      expression  = "SEARCH('{CWAgent,InstanceId,path} MetricName=\"disk_used_percent\" InstanceId=\"${each.value.instance_id}\" path=\"${each.value.disk}\"', 'Average', ${var.ec2_disk_period_seconds})"
-      label       = "DiskUsedPercent-${each.value.disk}"
-      period      = var.ec2_disk_period_seconds
-      return_data = "true"
-    },
-  ]
+  }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
   ok_actions    = [var.sns_topic_arns.warning_ok_arn]
@@ -497,30 +491,19 @@ module "ec2_disk_usage_crit" {
 
   alarm_name          = "HighDiskUsage-Crit-${each.key}"
   alarm_description   = "Triggers if EC2 instance ${each.value.instance_id} disk ${each.value.disk} exceeds ${var.ec2_disk_crit_threshold_percent}% used"
-  comparison_operator = each.value.os_type == "windows" ? "LessThanOrEqualToThreshold" : "GreaterThanOrEqualToThreshold"
+  comparison_operator = "LessThanOrEqualToThreshold"
+  metric_name         = "LogicalDisk % Free Space"
+  namespace           = "CWAgent"
+  period              = var.ec2_disk_period_seconds
+  statistic           = "Average"
   evaluation_periods  = var.ec2_disk_crit_evaluation_periods
-  threshold           = each.value.os_type == "windows" ? (100 - var.ec2_disk_crit_threshold_percent) : var.ec2_disk_crit_threshold_percent
+  threshold           = 100 - var.ec2_disk_crit_threshold_percent
   treat_missing_data  = "missing"
 
-  dimensions = each.value.os_type == "windows" ? {
+  dimensions = {
     InstanceId = each.value.instance_id
     instance   = each.value.disk
-  } : null
-
-  metric_name = each.value.os_type == "windows" ? "LogicalDisk % Free Space" : null
-  namespace   = each.value.os_type == "windows" ? "CWAgent" : null
-  period      = each.value.os_type == "windows" ? var.ec2_disk_period_seconds : null
-  statistic   = each.value.os_type == "windows" ? "Average" : null
-
-  metric_query = each.value.os_type == "windows" ? [] : [
-    {
-      id          = "disk_used"
-      expression  = "SEARCH('{CWAgent,InstanceId,path} MetricName=\"disk_used_percent\" InstanceId=\"${each.value.instance_id}\" path=\"${each.value.disk}\"', 'Average', ${var.ec2_disk_period_seconds})"
-      label       = "DiskUsedPercent-${each.value.disk}"
-      period      = var.ec2_disk_period_seconds
-      return_data = "true"
-    },
-  ]
+  }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
   ok_actions    = [var.sns_topic_arns.critical_ok_arn]
@@ -529,17 +512,11 @@ module "ec2_disk_usage_crit" {
 }
 
 ###############################################################################
-# EC2 disk I/O wait - one alarm per instance (not per disk_resources entry):
-# both Windows PhysicalDisk "instance" values (physical-disk index, not the
-# drive letter) and Linux diskio's "name" (block device name) are unknowable
-# from Terraform ahead of time, so both use a SEARCH expression matching on
-# InstanceId only, reduced with MAX across whichever devices/disks it finds
-# — i.e. alarms on the single busiest disk on the instance.
-#
-# Windows PhysicalDisk "% Disk Time" is already a percentage. Linux
-# diskio_io_time is a cumulative millisecond counter, so it's converted to a
-# percent-of-period-busy figure via metric math before the same MAX-based
-# comparison.
+# EC2 disk I/O wait - CWAgent PhysicalDisk "% Disk Time" on the "_Total"
+# aggregate instance (msi-terraform-cloudwatch-agent >= v0.2.3). Windows
+# only — see ec2_diskio_instances. Linux diskio has no aggregate-across-
+# devices equivalent and CloudWatch alarms can't use SEARCH() to work
+# around not knowing device names ahead of time, so it's not supported yet.
 ###############################################################################
 
 module "ec2_diskio_warn" {
@@ -550,34 +527,18 @@ module "ec2_diskio_warn" {
   alarm_name          = "HighDiskIOWait-Warn-${each.key}"
   alarm_description   = "Triggers if EC2 instance ${each.value.instance_id} disk I/O busy time exceeds ${var.ec2_diskio_warn_threshold_percent}%"
   comparison_operator = "GreaterThanOrEqualToThreshold"
+  metric_name         = "% Disk Time"
+  namespace           = "CWAgent"
+  period              = var.ec2_diskio_period_seconds
+  statistic           = "Average"
   evaluation_periods  = var.ec2_diskio_evaluation_periods
   threshold           = var.ec2_diskio_warn_threshold_percent
   treat_missing_data  = "missing"
 
-  metric_query = each.value.os_type == "windows" ? [
-    {
-      id          = "io_wait"
-      expression  = "MAX(SEARCH('{CWAgent,InstanceId} MetricName=\"% Disk Time\" InstanceId=\"${each.value.instance_id}\"', 'Average', ${var.ec2_diskio_period_seconds}))"
-      label       = "DiskIOWaitPercent"
-      period      = var.ec2_diskio_period_seconds
-      return_data = "true"
-    },
-    ] : [
-    {
-      id          = "io_ms"
-      expression  = "MAX(SEARCH('{CWAgent,InstanceId} MetricName=\"diskio_io_time\" InstanceId=\"${each.value.instance_id}\"', 'Sum', ${var.ec2_diskio_period_seconds}))"
-      label       = "DiskIOBusyMs"
-      period      = var.ec2_diskio_period_seconds
-      return_data = "false"
-    },
-    {
-      id          = "io_wait"
-      expression  = "(io_ms / (${var.ec2_diskio_period_seconds} * 1000)) * 100"
-      label       = "DiskIOWaitPercent"
-      period      = null
-      return_data = "true"
-    },
-  ]
+  dimensions = {
+    InstanceId = each.value.instance_id
+    instance   = "_Total"
+  }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
   ok_actions    = [var.sns_topic_arns.warning_ok_arn]
@@ -593,34 +554,18 @@ module "ec2_diskio_crit" {
   alarm_name          = "HighDiskIOWait-Crit-${each.key}"
   alarm_description   = "Triggers if EC2 instance ${each.value.instance_id} disk I/O busy time exceeds ${var.ec2_diskio_crit_threshold_percent}%"
   comparison_operator = "GreaterThanOrEqualToThreshold"
+  metric_name         = "% Disk Time"
+  namespace           = "CWAgent"
+  period              = var.ec2_diskio_period_seconds
+  statistic           = "Average"
   evaluation_periods  = var.ec2_diskio_evaluation_periods
   threshold           = var.ec2_diskio_crit_threshold_percent
   treat_missing_data  = "missing"
 
-  metric_query = each.value.os_type == "windows" ? [
-    {
-      id          = "io_wait"
-      expression  = "MAX(SEARCH('{CWAgent,InstanceId} MetricName=\"% Disk Time\" InstanceId=\"${each.value.instance_id}\"', 'Average', ${var.ec2_diskio_period_seconds}))"
-      label       = "DiskIOWaitPercent"
-      period      = var.ec2_diskio_period_seconds
-      return_data = "true"
-    },
-    ] : [
-    {
-      id          = "io_ms"
-      expression  = "MAX(SEARCH('{CWAgent,InstanceId} MetricName=\"diskio_io_time\" InstanceId=\"${each.value.instance_id}\"', 'Sum', ${var.ec2_diskio_period_seconds}))"
-      label       = "DiskIOBusyMs"
-      period      = var.ec2_diskio_period_seconds
-      return_data = "false"
-    },
-    {
-      id          = "io_wait"
-      expression  = "(io_ms / (${var.ec2_diskio_period_seconds} * 1000)) * 100"
-      label       = "DiskIOWaitPercent"
-      period      = null
-      return_data = "true"
-    },
-  ]
+  dimensions = {
+    InstanceId = each.value.instance_id
+    instance   = "_Total"
+  }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
   ok_actions    = [var.sns_topic_arns.critical_ok_arn]
