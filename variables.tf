@@ -77,9 +77,46 @@ variable "albs" {
 # EC2 inputs
 ###############################################################################
 
-variable "ec2_instance_ids" {
-  description = "List of EC2 instance IDs to monitor for status check failures."
-  type        = list(string)
+variable "ec2_instances" {
+  description = <<-EOT
+    Map of EC2 instances to monitor, keyed by an arbitrary identifier.
+
+    - `instance_id`: the EC2 InstanceId CloudWatch dimension value. Always
+      gets CPU utilization and status-check-failed alarms (both native
+      AWS/EC2 metrics, no CloudWatch Agent required).
+    - `os_type` (`"linux"` or `"windows"`): selects the CWAgent metric
+      names/dimensions used for memory, disk, and disk I/O wait. Must match
+      the `os_type` passed to this same instance's
+      msi-terraform-cloudwatch-agent invocation.
+    - `disk_resources`: CWAgent disk identifiers to alarm on (Linux: mount
+      paths, e.g. `["/"]`; Windows: drive letters, e.g. `["C:"]`) — must
+      match that instance's `mount_paths`/`windows_disk_resources` in the
+      agent module. Leave empty to skip disk-usage alarms for this instance
+      (e.g. CloudWatch Agent not deployed yet).
+    - `enable_memory` / `enable_diskio`: independently gate the memory and
+      disk-I/O-wait alarms, for the same reason (CWAgent metric
+      availability) — default `true`.
+    - `enable_network_errors`: gates the network-error-counter alarm.
+      Windows only for now — msi-terraform-cloudwatch-agent doesn't collect
+      Linux network error counters yet, so this is ignored (no alarm
+      created) when `os_type = "linux"`. Default `true`.
+  EOT
+  type = map(object({
+    instance_id           = string
+    os_type               = string
+    disk_resources        = optional(list(string), [])
+    enable_memory         = optional(bool, true)
+    enable_diskio         = optional(bool, true)
+    enable_network_errors = optional(bool, true)
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for k, v in var.ec2_instances : contains(["linux", "windows"], v.os_type)
+    ])
+    error_message = "Every ec2_instances entry's os_type must be \"linux\" or \"windows\"."
+  }
 }
 
 ###############################################################################
@@ -239,6 +276,173 @@ variable "alb_latency_crit_threshold_seconds" {
   description = "p95 target response time (seconds) at which the critical alarm triggers."
   type        = number
   default     = 3
+}
+
+###############################################################################
+# Threshold configuration - EC2 CPU utilization (native AWS/EC2 metric,
+# same on Linux and Windows)
+###############################################################################
+
+variable "ec2_cpu_warn_threshold_percent" {
+  description = "EC2 CPU utilization percent at which the warning alarm triggers."
+  type        = number
+  default     = 70
+}
+
+variable "ec2_cpu_warn_evaluation_minutes" {
+  description = "Number of consecutive 1-minute periods CPU must stay above the warning threshold before alarming."
+  type        = number
+  default     = 10
+}
+
+variable "ec2_cpu_crit_threshold_percent" {
+  description = "EC2 CPU utilization percent at which the critical alarm triggers."
+  type        = number
+  default     = 85
+}
+
+variable "ec2_cpu_crit_evaluation_minutes" {
+  description = "Number of consecutive 1-minute periods CPU must stay above the critical threshold before alarming."
+  type        = number
+  default     = 5
+}
+
+###############################################################################
+# Threshold configuration - EC2 memory utilization (CWAgent; mem_used_percent
+# on Linux, "Memory % Committed Bytes In Use" on Windows — both already
+# expressed as a "used" percentage, no direction inversion needed)
+###############################################################################
+
+variable "ec2_memory_warn_threshold_percent" {
+  description = "EC2 memory utilization percent at which the warning alarm triggers."
+  type        = number
+  default     = 75
+}
+
+variable "ec2_memory_warn_evaluation_minutes" {
+  description = "Number of consecutive 1-minute periods memory must stay above the warning threshold before alarming."
+  type        = number
+  default     = 10
+}
+
+variable "ec2_memory_crit_threshold_percent" {
+  description = "EC2 memory utilization percent at which the critical alarm triggers."
+  type        = number
+  default     = 90
+}
+
+variable "ec2_memory_crit_evaluation_minutes" {
+  description = "Number of consecutive 1-minute periods memory must stay above the critical threshold before alarming."
+  type        = number
+  default     = 5
+}
+
+###############################################################################
+# Threshold configuration - EC2 disk usage (CWAgent; one alarm per instance
+# per disk_resources entry). Linux disk_used_percent is a "used" percentage;
+# Windows LogicalDisk "% Free Space" is inverted, so the module flips both
+# the comparison operator and the threshold (100 - used_threshold) for
+# Windows instances rather than exposing separate free-space variables.
+###############################################################################
+
+variable "ec2_disk_warn_threshold_percent" {
+  description = "EC2 disk usage percent (used) at which the warning alarm triggers."
+  type        = number
+  default     = 75
+}
+
+variable "ec2_disk_warn_evaluation_periods" {
+  description = "Number of consecutive periods disk usage must stay above the warning threshold before alarming."
+  type        = number
+  default     = 5
+}
+
+variable "ec2_disk_crit_threshold_percent" {
+  description = "EC2 disk usage percent (used) at which the critical alarm triggers."
+  type        = number
+  default     = 90
+}
+
+variable "ec2_disk_crit_evaluation_periods" {
+  description = "Number of consecutive periods disk usage must stay above the critical threshold before alarming."
+  type        = number
+  default     = 3
+}
+
+variable "ec2_disk_period_seconds" {
+  description = "Window (seconds) over which EC2 disk usage is evaluated."
+  type        = number
+  default     = 60
+}
+
+###############################################################################
+# Threshold configuration - EC2 disk I/O wait.
+#
+# Windows PhysicalDisk "% Disk Time" is already a percentage — used
+# directly. Linux diskio_io_time is a cumulative millisecond counter, not a
+# percentage, so the module derives one via metric math:
+#   (diskio_io_time_sum_over_period / (period_seconds * 1000)) * 100
+# i.e. the fraction of the evaluation window the disk spent busy. Both OSes
+# compare against the same warn/crit percentages below.
+###############################################################################
+
+variable "ec2_diskio_warn_threshold_percent" {
+  description = "EC2 disk I/O wait/busy percent at which the warning alarm triggers."
+  type        = number
+  default     = 20
+}
+
+variable "ec2_diskio_crit_threshold_percent" {
+  description = "EC2 disk I/O wait/busy percent at which the critical alarm triggers."
+  type        = number
+  default     = 40
+}
+
+variable "ec2_diskio_period_seconds" {
+  description = "Window (seconds) over which EC2 disk I/O wait/busy percent is evaluated."
+  type        = number
+  default     = 60
+}
+
+variable "ec2_diskio_evaluation_periods" {
+  description = "Number of consecutive periods disk I/O wait/busy percent must breach its threshold before alarming."
+  type        = number
+  default     = 5
+}
+
+###############################################################################
+# Threshold configuration - EC2 network errors.
+#
+# Windows only for now (see ec2_instances.enable_network_errors). Summed as
+# a raw error count, not a rate, like the ALB 5xx alarms — CWAgent's
+# "Network Interface" Packets Received/Outbound Errors counters aren't
+# naturally a percentage either. Assumes one active network interface per
+# instance; an instance with multiple interfaces may need per-interface
+# handling this module doesn't yet provide.
+###############################################################################
+
+variable "ec2_network_errors_period_seconds" {
+  description = "Window (seconds) over which EC2 network interface errors are summed."
+  type        = number
+  default     = 300
+}
+
+variable "ec2_network_errors_evaluation_periods" {
+  description = "Number of consecutive windows the network error count must breach the threshold before alarming."
+  type        = number
+  default     = 2
+}
+
+variable "ec2_network_errors_warn_threshold_count" {
+  description = "Count of network interface errors (received + outbound) per window at which the warning alarm triggers."
+  type        = number
+  default     = 1
+}
+
+variable "ec2_network_errors_crit_threshold_count" {
+  description = "Count of network interface errors (received + outbound) per window at which the critical alarm triggers."
+  type        = number
+  default     = 10
 }
 
 ###############################################################################
