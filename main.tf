@@ -47,22 +47,6 @@ locals {
     }
   ]...)
 
-  # Windows CWAgent always appends ImageId/InstanceType/objectname to every
-  # performance-counter metric, in addition to whatever append_dimensions
-  # the agent config sets — confirmed live: alarms dimensioned with just
-  # {InstanceId} (or {InstanceId, instance} for per-resource metrics) never
-  # matched any data and sat in INSUFFICIENT_DATA indefinitely, even though
-  # the underlying metric was actively publishing. objectname is a fixed
-  # string per Windows performance object (Memory/LogicalDisk/PhysicalDisk);
-  # ImageId/InstanceType vary per instance and aren't knowable without a
-  # lookup.
-  ec2_windows_instance_ids = { for k, v in var.ec2_instances : k => v.instance_id if v.os_type == "windows" }
-}
-
-data "aws_instance" "windows_target" {
-  for_each = local.ec2_windows_instance_ids
-
-  instance_id = each.value
 }
 
 ###############################################################################
@@ -433,10 +417,8 @@ module "ec2_memory_utilization_warn" {
   treat_missing_data  = "missing"
 
   dimensions = each.value.os_type == "windows" ? {
-    InstanceId   = each.value.instance_id
-    ImageId      = data.aws_instance.windows_target[each.key].ami
-    InstanceType = data.aws_instance.windows_target[each.key].instance_type
-    objectname   = "Memory"
+    InstanceId = each.value.instance_id
+    objectname = "Memory"
     } : {
     InstanceId = each.value.instance_id
   }
@@ -464,10 +446,8 @@ module "ec2_memory_utilization_crit" {
   treat_missing_data  = "missing"
 
   dimensions = each.value.os_type == "windows" ? {
-    InstanceId   = each.value.instance_id
-    ImageId      = data.aws_instance.windows_target[each.key].ami
-    InstanceType = data.aws_instance.windows_target[each.key].instance_type
-    objectname   = "Memory"
+    InstanceId = each.value.instance_id
+    objectname = "Memory"
     } : {
     InstanceId = each.value.instance_id
   }
@@ -502,11 +482,9 @@ module "ec2_disk_usage_warn" {
   treat_missing_data  = "missing"
 
   dimensions = {
-    InstanceId   = each.value.instance_id
-    ImageId      = data.aws_instance.windows_target[each.value.instance_key].ami
-    InstanceType = data.aws_instance.windows_target[each.value.instance_key].instance_type
-    objectname   = "LogicalDisk"
-    instance     = each.value.disk
+    InstanceId = each.value.instance_id
+    objectname = "LogicalDisk"
+    instance   = each.value.disk
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
@@ -532,11 +510,9 @@ module "ec2_disk_usage_crit" {
   treat_missing_data  = "missing"
 
   dimensions = {
-    InstanceId   = each.value.instance_id
-    ImageId      = data.aws_instance.windows_target[each.value.instance_key].ami
-    InstanceType = data.aws_instance.windows_target[each.value.instance_key].instance_type
-    objectname   = "LogicalDisk"
-    instance     = each.value.disk
+    InstanceId = each.value.instance_id
+    objectname = "LogicalDisk"
+    instance   = each.value.disk
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
@@ -570,11 +546,9 @@ module "ec2_diskio_warn" {
   treat_missing_data  = "missing"
 
   dimensions = {
-    InstanceId   = each.value.instance_id
-    ImageId      = data.aws_instance.windows_target[each.key].ami
-    InstanceType = data.aws_instance.windows_target[each.key].instance_type
-    objectname   = "PhysicalDisk"
-    instance     = "_Total"
+    InstanceId = each.value.instance_id
+    objectname = "PhysicalDisk"
+    instance   = "_Total"
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
@@ -600,11 +574,9 @@ module "ec2_diskio_crit" {
   treat_missing_data  = "missing"
 
   dimensions = {
-    InstanceId   = each.value.instance_id
-    ImageId      = data.aws_instance.windows_target[each.key].ami
-    InstanceType = data.aws_instance.windows_target[each.key].instance_type
-    objectname   = "PhysicalDisk"
-    instance     = "_Total"
+    InstanceId = each.value.instance_id
+    objectname = "PhysicalDisk"
+    instance   = "_Total"
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
@@ -642,37 +614,28 @@ module "ec2_network_errors_warn" {
     {
       id = "received_errors"
       metric = [{
-        metric_name = "Packets Received Errors"
+        metric_name = "Network Interface Packets Received Errors"
         namespace   = "CWAgent"
         period      = var.ec2_network_errors_period_seconds
         stat        = "Sum"
-        # ImageId/InstanceType/objectname: confirmed Windows CWAgent behavior
-        # (see ec2_memory/ec2_disk_usage/ec2_diskio). The "instance" (network
-        # adapter name) dimension is NOT included here — unconfirmed live,
-        # since this metric has never actually published data yet. If the
-        # real metric turns out to carry an "instance" dimension too (likely,
-        # given every other multi-instance Windows perfmon object does),
-        # this alarm won't match until that's added once known.
         dimensions = {
-          InstanceId   = each.value.instance_id
-          ImageId      = data.aws_instance.windows_target[each.key].ami
-          InstanceType = data.aws_instance.windows_target[each.key].instance_type
-          objectname   = "Network Interface"
+          InstanceId = each.value.instance_id
+          objectname = "Network Interface"
+          instance   = var.ec2_network_adapter_name
         }
       }]
     },
     {
       id = "outbound_errors"
       metric = [{
-        metric_name = "Packets Outbound Errors"
+        metric_name = "Network Interface Packets Outbound Errors"
         namespace   = "CWAgent"
         period      = var.ec2_network_errors_period_seconds
         stat        = "Sum"
         dimensions = {
-          InstanceId   = each.value.instance_id
-          ImageId      = data.aws_instance.windows_target[each.key].ami
-          InstanceType = data.aws_instance.windows_target[each.key].instance_type
-          objectname   = "Network Interface"
+          InstanceId = each.value.instance_id
+          objectname = "Network Interface"
+          instance   = var.ec2_network_adapter_name
         }
       }]
     },
@@ -706,37 +669,28 @@ module "ec2_network_errors_crit" {
     {
       id = "received_errors"
       metric = [{
-        metric_name = "Packets Received Errors"
+        metric_name = "Network Interface Packets Received Errors"
         namespace   = "CWAgent"
         period      = var.ec2_network_errors_period_seconds
         stat        = "Sum"
-        # ImageId/InstanceType/objectname: confirmed Windows CWAgent behavior
-        # (see ec2_memory/ec2_disk_usage/ec2_diskio). The "instance" (network
-        # adapter name) dimension is NOT included here — unconfirmed live,
-        # since this metric has never actually published data yet. If the
-        # real metric turns out to carry an "instance" dimension too (likely,
-        # given every other multi-instance Windows perfmon object does),
-        # this alarm won't match until that's added once known.
         dimensions = {
-          InstanceId   = each.value.instance_id
-          ImageId      = data.aws_instance.windows_target[each.key].ami
-          InstanceType = data.aws_instance.windows_target[each.key].instance_type
-          objectname   = "Network Interface"
+          InstanceId = each.value.instance_id
+          objectname = "Network Interface"
+          instance   = var.ec2_network_adapter_name
         }
       }]
     },
     {
       id = "outbound_errors"
       metric = [{
-        metric_name = "Packets Outbound Errors"
+        metric_name = "Network Interface Packets Outbound Errors"
         namespace   = "CWAgent"
         period      = var.ec2_network_errors_period_seconds
         stat        = "Sum"
         dimensions = {
-          InstanceId   = each.value.instance_id
-          ImageId      = data.aws_instance.windows_target[each.key].ami
-          InstanceType = data.aws_instance.windows_target[each.key].instance_type
-          objectname   = "Network Interface"
+          InstanceId = each.value.instance_id
+          objectname = "Network Interface"
+          instance   = var.ec2_network_adapter_name
         }
       }]
     },

@@ -439,6 +439,18 @@ variable "ec2_network_errors_crit_threshold_count" {
   default     = 10
 }
 
+variable "ec2_network_adapter_name" {
+  description = <<-EOT
+    Windows perfmon "Network Interface" instance name CWAgent publishes
+    network-error metrics under. Confirmed live on a t3a instance:
+    "Amazon Elastic Network Adapter" (the standard ENA driver name used by
+    virtually all current-generation instance types). Override if a target
+    instance uses a different network adapter driver.
+  EOT
+  type        = string
+  default     = "Amazon Elastic Network Adapter"
+}
+
 ###############################################################################
 # Threshold configuration - EC2 status checks
 ###############################################################################
