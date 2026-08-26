@@ -52,29 +52,32 @@ sit in `INSUFFICIENT_DATA` indefinitely. Each `ec2_instances` entry's
 `os_type` and `disk_resources` must match what you passed to that instance's
 agent module invocation.
 
-### Windows CWAgent metrics need ImageId/InstanceType/objectname dimensions too
+### Windows CWAgent metrics need an `objectname` dimension too
 
-Confirmed live: on Windows, every performance-counter metric CWAgent
-publishes carries `ImageId` and `InstanceType` dimensions automatically —
-in addition to whatever `append_dimensions` the agent config sets — plus an
-`objectname` dimension naming the source perfmon object (`Memory`,
-`LogicalDisk`, `PhysicalDisk`, `Network Interface`). CloudWatch alarms
-require an *exact* dimension-set match, so an alarm dimensioned with only
-`{InstanceId}` (or `{InstanceId, instance}`) never matches real data —
-observed as `INSUFFICIENT_DATA` forever even while the metric was actively
-publishing every minute. This module looks up each Windows instance's
-`ami`/`instance_type` via a `data "aws_instance"` and includes them plus
-the correct `objectname` in every Windows CWAgent-based alarm's
-dimensions. Linux CWAgent doesn't have this behavior (dimensions there are
-exactly whatever `append_dimensions` configures).
+Confirmed live: every Windows performance-counter metric CWAgent publishes
+carries an `objectname` dimension naming the source perfmon object
+(`Memory`, `LogicalDisk`, `PhysicalDisk`, `Network Interface`), in addition
+to whatever `append_dimensions` the agent config sets. CloudWatch alarms
+require an *exact* dimension-set match, so an alarm missing `objectname`
+never matches real data — observed as `INSUFFICIENT_DATA` forever even
+while the metric was actively publishing every minute.
 
-The `Network Interface` object is likely also multi-instance like
-`PhysicalDisk` (i.e. probably carries a per-adapter `instance` dimension),
-but this hasn't been confirmed live yet — the metric had never
-successfully published data as of writing. The network-errors alarms here
-deliberately omit an `instance` dimension for now; if live data shows one
-is needed, that'll require the same kind of fix disk I/O wait got
-(`_Total`-style aggregate, if `Network Interface` has one — unconfirmed).
+(An earlier version of this fix also added `ImageId`/`InstanceType` to
+every dimension set, based on data that turned out to come from a
+different, pre-existing CWAgent config on the test instance — not from
+this module's own `append_dimensions = {InstanceId}`. Confirmed against
+metrics this module's own config actually produced: no `ImageId`/
+`InstanceType`, just `{InstanceId, objectname}` (+ `instance` for
+multi-instance objects). Reverted.)
+
+`Network Interface` is also multi-instance like `PhysicalDisk` — confirmed
+live it carries a per-adapter `instance` dimension. The observed value on a
+t3a instance was `"Amazon Elastic Network Adapter"` (the standard AWS ENA
+driver name, used by virtually all current-generation instance types), now
+the default for `ec2_network_adapter_name`. Override it if a target
+instance uses a different network adapter driver. The real metric name is
+also the full perfmon `"<object> <counter>"` string — e.g. `"Network
+Interface Packets Received Errors"`, not just `"Packets Received Errors"`.
 
 ### Disk usage, disk I/O wait, and network errors are Windows-only for now
 
@@ -218,6 +221,7 @@ module "cloudwatch_alarms" {
 | `ec2_network_errors_evaluation_periods` | EC2 network errors number of periods | `number` | `2` | no |
 | `ec2_network_errors_warn_threshold_count` | EC2 network errors warn threshold (count) | `number` | `1` | no |
 | `ec2_network_errors_crit_threshold_count` | EC2 network errors crit threshold (count) | `number` | `10` | no |
+| `ec2_network_adapter_name` | Windows perfmon "Network Interface" instance name | `string` | `"Amazon Elastic Network Adapter"` | no |
 | `ec2_status_check_period_seconds` | EC2 status check evaluation window (seconds) | `number` | `60` | no |
 | `ec2_status_check_evaluation_periods` | EC2 status check number of periods | `number` | `2` | no |
 | `lambda_error_rate_period_seconds` | Lambda error rate evaluation window (seconds) | `number` | `300` | no |
