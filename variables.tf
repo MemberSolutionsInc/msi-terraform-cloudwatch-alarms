@@ -67,9 +67,22 @@ variable "albs" {
     Map of Application Load Balancers to monitor, keyed by an arbitrary
     identifier. `name` must be the ALB's CloudWatch dimension value (the
     `app/<alb-name>/<id>` suffix of the ALB's ARN).
+
+    `target_groups` (optional): map of this ALB's target groups to alarm
+    Healthy/Unhealthy Target Count on, keyed by an arbitrary identifier.
+    `name` must be the target group's CloudWatch dimension value (the
+    `targetgroup/<tg-name>/<id>` suffix of the target group's ARN) - check
+    live with `aws elbv2 describe-target-groups`, don't assume it matches
+    the target group's display name. Only include target groups actually
+    attached to this ALB (unattached/orphaned ones have no HealthyHostCount
+    data to alarm on). Defaults to `{}` (no target-group alarms) since
+    there's no safe universal default.
   EOT
   type = map(object({
     name = string
+    target_groups = optional(map(object({
+      name = string
+    })), {})
   }))
 }
 
@@ -287,6 +300,39 @@ variable "alb_latency_crit_threshold_seconds" {
   description = "p95 target response time (seconds) at which the critical alarm triggers."
   type        = number
   default     = 3
+}
+
+###############################################################################
+# Threshold configuration - ALB target group Healthy/Unhealthy Target Count
+# (AWS/ApplicationELB HealthyHostCount/UnHealthyHostCount, native metrics).
+# "Decreasing" (§8.4 warn guidance) is operationalized as "at least one
+# unhealthy target" - the metric has no rate-of-change alarm primitive, and
+# any unhealthy target is itself worth a warning regardless of trend.
+# "Zero healthy targets" (§8.4 crit guidance) maps directly to a threshold.
+###############################################################################
+
+variable "alb_target_group_health_period_seconds" {
+  description = "Window (seconds) over which target group health is evaluated."
+  type        = number
+  default     = 60
+}
+
+variable "alb_target_group_health_evaluation_periods" {
+  description = "Number of consecutive windows target health must breach the threshold before alarming."
+  type        = number
+  default     = 2
+}
+
+variable "alb_unhealthy_targets_warn_threshold_count" {
+  description = "Count of unhealthy targets in a target group at which the warning alarm triggers."
+  type        = number
+  default     = 1
+}
+
+variable "alb_healthy_targets_crit_threshold_count" {
+  description = "Count of healthy targets in a target group at or below which the critical (zero-healthy) alarm triggers."
+  type        = number
+  default     = 0
 }
 
 ###############################################################################

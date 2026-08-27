@@ -67,6 +67,20 @@ locals {
     ]
   )...)
 
+  # One entry per (ALB, target group) pair, for Healthy/Unhealthy Target
+  # Count alarms - both metrics are TargetGroup-dimensioned, not ALB-level
+  # like the 5xx/latency alarms above, so this needs the LoadBalancer
+  # dimension carried alongside each target group.
+  alb_target_group_pairs = merge([
+    for alb_key, alb in var.albs : {
+      for tg_key, tg in alb.target_groups : "${alb_key}-${tg_key}" => {
+        alb_key  = alb_key
+        alb_name = alb.name
+        tg_name  = tg.name
+      }
+    }
+  ]...)
+
 }
 
 ###############################################################################
@@ -349,6 +363,66 @@ module "alb_latency_crit" {
 
   dimensions = {
     LoadBalancer = each.value.name
+  }
+
+  alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
+  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+
+  tags = local.tags_crit
+}
+
+###############################################################################
+# ALB target group Healthy/Unhealthy Target Count - both metrics require
+# LoadBalancer + TargetGroup dimensions together (TargetGroup alone is
+# rejected by CloudWatch), unlike the ALB-level 5xx/latency alarms above.
+###############################################################################
+
+module "alb_unhealthy_targets_warn" {
+  source   = "terraform-aws-modules/cloudwatch/aws//modules/metric-alarm"
+  version  = "5.7.1"
+  for_each = local.alb_target_group_pairs
+
+  alarm_name          = "UnhealthyTargets-Warn-${each.key}"
+  alarm_description   = "Triggers when target group ${each.key} has at least ${var.alb_unhealthy_targets_warn_threshold_count} unhealthy target(s)"
+  namespace           = "AWS/ApplicationELB"
+  metric_name         = "UnHealthyHostCount"
+  statistic           = "Maximum"
+  period              = var.alb_target_group_health_period_seconds
+  evaluation_periods  = var.alb_target_group_health_evaluation_periods
+  threshold           = var.alb_unhealthy_targets_warn_threshold_count
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    LoadBalancer = each.value.alb_name
+    TargetGroup  = each.value.tg_name
+  }
+
+  alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
+  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+
+  tags = local.tags_warn
+}
+
+module "alb_healthy_targets_crit" {
+  source   = "terraform-aws-modules/cloudwatch/aws//modules/metric-alarm"
+  version  = "5.7.1"
+  for_each = local.alb_target_group_pairs
+
+  alarm_name          = "ZeroHealthyTargets-Crit-${each.key}"
+  alarm_description   = "Triggers when target group ${each.key} has ${var.alb_healthy_targets_crit_threshold_count} or fewer healthy targets"
+  namespace           = "AWS/ApplicationELB"
+  metric_name         = "HealthyHostCount"
+  statistic           = "Minimum"
+  period              = var.alb_target_group_health_period_seconds
+  evaluation_periods  = var.alb_target_group_health_evaluation_periods
+  threshold           = var.alb_healthy_targets_crit_threshold_count
+  comparison_operator = "LessThanOrEqualToThreshold"
+  treat_missing_data  = "breaching"
+
+  dimensions = {
+    LoadBalancer = each.value.alb_name
+    TargetGroup  = each.value.tg_name
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
