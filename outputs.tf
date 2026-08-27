@@ -16,6 +16,8 @@ output "alarm_arns" {
     { for k, v in module.alb_5xx_crit : "alb-5xx-crit-${k}" => v.cloudwatch_metric_alarm_arn },
     { for k, v in module.alb_latency_warn : "alb-latency-warn-${k}" => v.cloudwatch_metric_alarm_arn },
     { for k, v in module.alb_latency_crit : "alb-latency-crit-${k}" => v.cloudwatch_metric_alarm_arn },
+    { for k, v in module.alb_unhealthy_targets_warn : "alb-unhealthy-targets-warn-${k}" => v.cloudwatch_metric_alarm_arn },
+    { for k, v in module.alb_healthy_targets_crit : "alb-healthy-targets-crit-${k}" => v.cloudwatch_metric_alarm_arn },
     { for k, v in module.ec2_cpu_utilization_warn : "ec2-cpu-warn-${k}" => v.cloudwatch_metric_alarm_arn },
     { for k, v in module.ec2_cpu_utilization_crit : "ec2-cpu-crit-${k}" => v.cloudwatch_metric_alarm_arn },
     { for k, v in module.ec2_memory_utilization_warn : "ec2-memory-warn-${k}" => v.cloudwatch_metric_alarm_arn },
