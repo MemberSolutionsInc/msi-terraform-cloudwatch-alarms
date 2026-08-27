@@ -20,32 +20,52 @@ locals {
 
   ec2_memory_instances = { for k, v in var.ec2_instances : k => v if v.enable_memory }
 
-  # Windows only, for both: CloudWatch alarms can't use SEARCH() (confirmed
-  # live: "ValidationError: SEARCH is not supported on Metric Alarms"), so
-  # an alarm needs a dimension value known ahead of time. Windows disk I/O
-  # wait uses PhysicalDisk's well-known "_Total" aggregate instance
-  # (msi-terraform-cloudwatch-agent >= v0.2.3); Linux diskio has no such
-  # aggregate (device names are per-instance and unpredictable), so it's
-  # not supported here yet.
-  ec2_diskio_instances         = { for k, v in var.ec2_instances : k => v if v.enable_diskio && v.os_type == "windows" }
-  ec2_network_errors_instances = { for k, v in var.ec2_instances : k => v if v.enable_network_errors && v.os_type == "windows" }
+  # Disk I/O wait and network errors are supported on both OSes, but each
+  # got there differently: Windows disk I/O wait uses PhysicalDisk's
+  # well-known "_Total" aggregate instance (msi-terraform-cloudwatch-agent
+  # >= v0.2.3); Linux uses cpu_usage_iowait, a system-wide percentage with
+  # no per-device dimension at all (>= v0.2.8) - both sidestep the same
+  # "CloudWatch alarms can't use SEARCH()" problem (confirmed live:
+  # "ValidationError: SEARCH is not supported on Metric Alarms") without
+  # needing a per-instance opt-in value. Network errors are inherently
+  # per-interface on both OSes, so both use a global interface-name
+  # variable (ec2_network_adapter_name / ec2_linux_network_interface_name)
+  # rather than a per-instance field, on the assumption of one active
+  # interface per instance.
+  ec2_diskio_instances         = { for k, v in var.ec2_instances : k => v if v.enable_diskio }
+  ec2_network_errors_instances = { for k, v in var.ec2_instances : k => v if v.enable_network_errors }
 
-  # One entry per (instance, disk_resources entry) pair, for disk-usage
-  # alarms. Windows only, for the same SEARCH() reason as diskio above —
-  # Linux disk_used_percent carries an fstype dimension whose value isn't
-  # knowable from Terraform, and there's no "_Total"-style aggregate for it.
+  # One entry per (instance, disk resource) pair, for disk-usage alarms.
   # Windows drive letters contain ":" which isn't valid in a map
-  # key/alarm-name segment, so it's stripped there.
-  ec2_disk_pairs = merge([
-    for k, v in var.ec2_instances : v.os_type != "windows" ? {} : {
-      for dr in v.disk_resources : "${k}-${replace(dr, ":", "")}" => {
-        instance_key = k
-        instance_id  = v.instance_id
-        os_type      = v.os_type
-        disk         = dr
+  # key/alarm-name segment, so it's stripped there. Linux disk_used_percent
+  # carries an fstype dimension whose value isn't knowable from Terraform
+  # (same SEARCH() problem as above, but with no aggregate/system-wide
+  # equivalent available for per-mount disk usage) - callers must supply it
+  # explicitly per path via linux_disk_paths, checked live beforehand.
+  ec2_disk_pairs = merge(concat(
+    [
+      for k, v in var.ec2_instances : v.os_type != "windows" ? {} : {
+        for dr in v.disk_resources : "${k}-${replace(dr, ":", "")}" => {
+          instance_key = k
+          instance_id  = v.instance_id
+          os_type      = v.os_type
+          disk         = dr
+          fstype       = null
+        }
       }
-    }
-  ]...)
+    ],
+    [
+      for k, v in var.ec2_instances : v.os_type != "linux" ? {} : {
+        for dp in v.linux_disk_paths : "${k}-${dp.path == "/" ? "root" : replace(trimprefix(dp.path, "/"), "/", "-")}" => {
+          instance_key = k
+          instance_id  = v.instance_id
+          os_type      = v.os_type
+          disk         = dp.path
+          fstype       = dp.fstype
+        }
+      }
+    ]
+  )...)
 
 }
 
@@ -472,19 +492,23 @@ module "ec2_disk_usage_warn" {
 
   alarm_name          = "HighDiskUsage-Warn-${each.key}"
   alarm_description   = "Triggers if EC2 instance ${each.value.instance_id} disk ${each.value.disk} exceeds ${var.ec2_disk_warn_threshold_percent}% used"
-  comparison_operator = "LessThanOrEqualToThreshold"
-  metric_name         = "LogicalDisk % Free Space"
+  comparison_operator = each.value.os_type == "windows" ? "LessThanOrEqualToThreshold" : "GreaterThanOrEqualToThreshold"
+  metric_name         = each.value.os_type == "windows" ? "LogicalDisk % Free Space" : "disk_used_percent"
   namespace           = "CWAgent"
   period              = var.ec2_disk_period_seconds
   statistic           = "Average"
   evaluation_periods  = var.ec2_disk_warn_evaluation_periods
-  threshold           = 100 - var.ec2_disk_warn_threshold_percent
+  threshold           = each.value.os_type == "windows" ? 100 - var.ec2_disk_warn_threshold_percent : var.ec2_disk_warn_threshold_percent
   treat_missing_data  = "missing"
 
-  dimensions = {
+  dimensions = each.value.os_type == "windows" ? {
     InstanceId = each.value.instance_id
     objectname = "LogicalDisk"
     instance   = each.value.disk
+    } : {
+    InstanceId = each.value.instance_id
+    path       = each.value.disk
+    fstype     = each.value.fstype
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
@@ -500,19 +524,23 @@ module "ec2_disk_usage_crit" {
 
   alarm_name          = "HighDiskUsage-Crit-${each.key}"
   alarm_description   = "Triggers if EC2 instance ${each.value.instance_id} disk ${each.value.disk} exceeds ${var.ec2_disk_crit_threshold_percent}% used"
-  comparison_operator = "LessThanOrEqualToThreshold"
-  metric_name         = "LogicalDisk % Free Space"
+  comparison_operator = each.value.os_type == "windows" ? "LessThanOrEqualToThreshold" : "GreaterThanOrEqualToThreshold"
+  metric_name         = each.value.os_type == "windows" ? "LogicalDisk % Free Space" : "disk_used_percent"
   namespace           = "CWAgent"
   period              = var.ec2_disk_period_seconds
   statistic           = "Average"
   evaluation_periods  = var.ec2_disk_crit_evaluation_periods
-  threshold           = 100 - var.ec2_disk_crit_threshold_percent
+  threshold           = each.value.os_type == "windows" ? 100 - var.ec2_disk_crit_threshold_percent : var.ec2_disk_crit_threshold_percent
   treat_missing_data  = "missing"
 
-  dimensions = {
+  dimensions = each.value.os_type == "windows" ? {
     InstanceId = each.value.instance_id
     objectname = "LogicalDisk"
     instance   = each.value.disk
+    } : {
+    InstanceId = each.value.instance_id
+    path       = each.value.disk
+    fstype     = each.value.fstype
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
@@ -522,11 +550,12 @@ module "ec2_disk_usage_crit" {
 }
 
 ###############################################################################
-# EC2 disk I/O wait - CWAgent PhysicalDisk "% Disk Time" on the "_Total"
-# aggregate instance (msi-terraform-cloudwatch-agent >= v0.2.3). Windows
-# only — see ec2_diskio_instances. Linux diskio has no aggregate-across-
-# devices equivalent and CloudWatch alarms can't use SEARCH() to work
-# around not knowing device names ahead of time, so it's not supported yet.
+# EC2 disk I/O wait - Windows: CWAgent PhysicalDisk "% Disk Time" on the
+# "_Total" aggregate instance (msi-terraform-cloudwatch-agent >= v0.2.3).
+# Linux: cpu_usage_iowait, a system-wide percentage with no per-device
+# dimension (>= v0.2.8) - see msi-terraform-cloudwatch-agent's README for
+# why this is used instead of diskio_io_time (a raw, unpredictable-device
+# counter, not a percentage).
 ###############################################################################
 
 module "ec2_diskio_warn" {
@@ -537,7 +566,7 @@ module "ec2_diskio_warn" {
   alarm_name          = "HighDiskIOWait-Warn-${each.key}"
   alarm_description   = "Triggers if EC2 instance ${each.value.instance_id} disk I/O busy time exceeds ${var.ec2_diskio_warn_threshold_percent}%"
   comparison_operator = "GreaterThanOrEqualToThreshold"
-  metric_name         = "% Disk Time"
+  metric_name         = each.value.os_type == "windows" ? "% Disk Time" : "cpu_usage_iowait"
   namespace           = "CWAgent"
   period              = var.ec2_diskio_period_seconds
   statistic           = "Average"
@@ -545,10 +574,12 @@ module "ec2_diskio_warn" {
   threshold           = var.ec2_diskio_warn_threshold_percent
   treat_missing_data  = "missing"
 
-  dimensions = {
+  dimensions = each.value.os_type == "windows" ? {
     InstanceId = each.value.instance_id
     objectname = "PhysicalDisk"
     instance   = "_Total"
+    } : {
+    InstanceId = each.value.instance_id
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
@@ -565,7 +596,7 @@ module "ec2_diskio_crit" {
   alarm_name          = "HighDiskIOWait-Crit-${each.key}"
   alarm_description   = "Triggers if EC2 instance ${each.value.instance_id} disk I/O busy time exceeds ${var.ec2_diskio_crit_threshold_percent}%"
   comparison_operator = "GreaterThanOrEqualToThreshold"
-  metric_name         = "% Disk Time"
+  metric_name         = each.value.os_type == "windows" ? "% Disk Time" : "cpu_usage_iowait"
   namespace           = "CWAgent"
   period              = var.ec2_diskio_period_seconds
   statistic           = "Average"
@@ -573,10 +604,12 @@ module "ec2_diskio_crit" {
   threshold           = var.ec2_diskio_crit_threshold_percent
   treat_missing_data  = "missing"
 
-  dimensions = {
+  dimensions = each.value.os_type == "windows" ? {
     InstanceId = each.value.instance_id
     objectname = "PhysicalDisk"
     instance   = "_Total"
+    } : {
+    InstanceId = each.value.instance_id
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
@@ -586,10 +619,10 @@ module "ec2_diskio_crit" {
 }
 
 ###############################################################################
-# EC2 network errors - Windows only for now (see var.ec2_instances
-# description; Linux CWAgent net error counters aren't collected yet by
-# msi-terraform-cloudwatch-agent). Summed as a raw count like the ALB 5xx
-# alarms, not a rate. Assumes one active network interface per instance.
+# EC2 network errors - works on both OSes as of msi-terraform-cloudwatch-agent
+# >= v0.2.7 (Linux net plugin). Summed as a raw count like the ALB 5xx
+# alarms, not a rate. Assumes one active network interface per instance -
+# see ec2_network_adapter_name / ec2_linux_network_interface_name.
 ###############################################################################
 
 module "ec2_network_errors_warn" {
@@ -614,28 +647,34 @@ module "ec2_network_errors_warn" {
     {
       id = "received_errors"
       metric = [{
-        metric_name = "Network Interface Packets Received Errors"
+        metric_name = each.value.os_type == "windows" ? "Network Interface Packets Received Errors" : "net_err_in"
         namespace   = "CWAgent"
         period      = var.ec2_network_errors_period_seconds
         stat        = "Sum"
-        dimensions = {
+        dimensions = each.value.os_type == "windows" ? {
           InstanceId = each.value.instance_id
           objectname = "Network Interface"
           instance   = var.ec2_network_adapter_name
+          } : {
+          InstanceId = each.value.instance_id
+          interface  = var.ec2_linux_network_interface_name
         }
       }]
     },
     {
       id = "outbound_errors"
       metric = [{
-        metric_name = "Network Interface Packets Outbound Errors"
+        metric_name = each.value.os_type == "windows" ? "Network Interface Packets Outbound Errors" : "net_err_out"
         namespace   = "CWAgent"
         period      = var.ec2_network_errors_period_seconds
         stat        = "Sum"
-        dimensions = {
+        dimensions = each.value.os_type == "windows" ? {
           InstanceId = each.value.instance_id
           objectname = "Network Interface"
           instance   = var.ec2_network_adapter_name
+          } : {
+          InstanceId = each.value.instance_id
+          interface  = var.ec2_linux_network_interface_name
         }
       }]
     },
@@ -669,28 +708,34 @@ module "ec2_network_errors_crit" {
     {
       id = "received_errors"
       metric = [{
-        metric_name = "Network Interface Packets Received Errors"
+        metric_name = each.value.os_type == "windows" ? "Network Interface Packets Received Errors" : "net_err_in"
         namespace   = "CWAgent"
         period      = var.ec2_network_errors_period_seconds
         stat        = "Sum"
-        dimensions = {
+        dimensions = each.value.os_type == "windows" ? {
           InstanceId = each.value.instance_id
           objectname = "Network Interface"
           instance   = var.ec2_network_adapter_name
+          } : {
+          InstanceId = each.value.instance_id
+          interface  = var.ec2_linux_network_interface_name
         }
       }]
     },
     {
       id = "outbound_errors"
       metric = [{
-        metric_name = "Network Interface Packets Outbound Errors"
+        metric_name = each.value.os_type == "windows" ? "Network Interface Packets Outbound Errors" : "net_err_out"
         namespace   = "CWAgent"
         period      = var.ec2_network_errors_period_seconds
         stat        = "Sum"
-        dimensions = {
+        dimensions = each.value.os_type == "windows" ? {
           InstanceId = each.value.instance_id
           objectname = "Network Interface"
           instance   = var.ec2_network_adapter_name
+          } : {
+          InstanceId = each.value.instance_id
+          interface  = var.ec2_linux_network_interface_name
         }
       }]
     },

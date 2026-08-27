@@ -22,9 +22,9 @@ which consumes the `alarm_arns` output from this module.
 | ALB latency | `AWS/ApplicationELB` `TargetResponseTime` (p95) | warn (>=1s) / crit (>=3s) |
 | EC2 CPU utilization | `AWS/EC2` `CPUUtilization` (native, both OS) | warn (>=70%, 10min) / crit (>=85%, 5min) |
 | EC2 memory utilization | `CWAgent` `mem_used_percent` (Linux) / `Memory % Committed Bytes In Use` (Windows) | warn (>=75%, 10min) / crit (>=90%, 5min) |
-| EC2 disk usage | `CWAgent` `LogicalDisk % Free Space` (Windows only, inverted) | warn (>=75%) / crit (>=90%) |
-| EC2 disk I/O wait | `CWAgent` `PhysicalDisk % Disk Time` on the `_Total` aggregate (Windows only) | warn (>=20%) / crit (>=40%) |
-| EC2 network interface errors | `CWAgent` `Packets Received/Outbound Errors` (Windows only) | warn / crit (configurable counts) |
+| EC2 disk usage | `CWAgent` `disk_used_percent` (Linux, per `linux_disk_paths`) / `LogicalDisk % Free Space` (Windows, inverted) | warn (>=75%) / crit (>=90%) |
+| EC2 disk I/O wait | `CWAgent` `cpu_usage_iowait` (Linux, system-wide) / `PhysicalDisk % Disk Time` on the `_Total` aggregate (Windows) | warn (>=20%) / crit (>=40%) |
+| EC2 network interface errors | `CWAgent` `net_err_in`/`net_err_out` (Linux) / `Packets Received/Outbound Errors` (Windows) | warn / crit (configurable counts) |
 | EC2 status check failed | `AWS/EC2` `StatusCheckFailed` | single tier |
 | Lambda error rate | `AWS/Lambda` `Errors`/`Invocations` (metric math) | warn (>=1%) / crit (>=5%) |
 | Lambda duration | `AWS/Lambda` `Duration` (p95, % of timeout) | warn (>=75%) / crit (>=90%) |
@@ -47,10 +47,12 @@ CPU utilization and status-check-failed are native `AWS/EC2` metrics and need
 nothing extra. Memory, disk usage, disk I/O wait, and network interface
 errors are all `CWAgent` metrics — the target instance needs
 [`msi-terraform-cloudwatch-agent`](https://github.com/MemberSolutionsInc/msi-terraform-cloudwatch-agent)
-(`>= v0.2.4`) deployed with a matching `os_type` first, or these alarms will
-sit in `INSUFFICIENT_DATA` indefinitely. Each `ec2_instances` entry's
-`os_type` and `disk_resources` must match what you passed to that instance's
-agent module invocation.
+(`>= v0.2.8` for full Linux support - `v0.2.4` covers Windows and Linux
+memory/disk-usage-collection only) deployed with a matching `os_type` first,
+or these alarms will sit in `INSUFFICIENT_DATA` indefinitely. Each
+`ec2_instances` entry's `os_type`, `disk_resources` (Windows), and
+`linux_disk_paths` (Linux) must match what you passed to that instance's
+agent module invocation (`windows_disk_resources` / `mount_paths`).
 
 ### Windows CWAgent metrics need an `objectname` dimension too
 
@@ -79,25 +81,38 @@ instance uses a different network adapter driver. The real metric name is
 also the full perfmon `"<object> <counter>"` string — e.g. `"Network
 Interface Packets Received Errors"`, not just `"Packets Received Errors"`.
 
-### Disk usage, disk I/O wait, and network errors are Windows-only for now
+### Disk usage, disk I/O wait, and network errors now work on both OSes
 
 CloudWatch metric alarms cannot use the `SEARCH()` function at all
 (confirmed live: `ValidationError: SEARCH is not supported on Metric
 Alarms`) — an earlier version of this module tried to use it to work around
 not knowing Linux `fstype`/device names or Windows `PhysicalDisk` instance
 names ahead of time. That doesn't work, full stop; SEARCH is dashboard/
-anomaly-detection-only.
+anomaly-detection-only. Every alarm here needs a dimension value known
+ahead of time instead, and each metric solves that differently:
 
-Windows disk I/O wait is solved instead by having
-`msi-terraform-cloudwatch-agent` collect PhysicalDisk's well-known `_Total`
-aggregate instance rather than a per-disk name — a fixed, predictable
-dimension value a plain alarm can target directly. There's no equivalent
-aggregate for Linux `diskio` (or a stand-in for its unpredictable `fstype`
-dimension on `disk_used_percent`), so **disk usage, disk I/O wait, and
-network interface errors are all Windows-only** (`enable_diskio`/
-`enable_network_errors = true` on a Linux entry, or a Linux entry in
-`disk_resources`, is a no-op — no alarm created). CPU and memory work on
-both OSes.
+- **Disk I/O wait**: Windows uses PhysicalDisk's well-known `_Total`
+  aggregate instance. Linux uses `cpu_usage_iowait` — a system-wide
+  percentage with no per-device dimension at all
+  (`msi-terraform-cloudwatch-agent >= v0.2.8`) — rather than the raw,
+  per-device, unpredictable-dimension `diskio_io_time` counter. Both are a
+  fixed, predictable value/metric a plain alarm can target directly; no
+  per-instance opt-in needed (`enable_diskio = true` is enough).
+- **Network errors**: inherently per-interface on both OSes (no
+  aggregate-across-interfaces metric exists), so both use a *global*
+  variable (`ec2_network_adapter_name` / `ec2_linux_network_interface_name`)
+  on the assumption of one active interface per instance, rather than a
+  per-instance field. Override the variable if a target instance's
+  interface name/driver differs from the default.
+- **Disk usage**: still genuinely needs a per-instance, per-mount value —
+  there's no aggregate or system-wide equivalent for "how full is this
+  specific filesystem." Linux entries must supply `linux_disk_paths`
+  (`[{path, fstype}, ...]`) explicitly; check live with `df -T <path>`
+  before setting it. An empty `linux_disk_paths` (the default) means no
+  disk-usage alarms are created for that instance - there's no safe
+  universal default to fall back to.
+
+CPU and memory work on both OSes with no extra configuration.
 
 ## Mandatory tagging
 
@@ -147,11 +162,13 @@ module "cloudwatch_alarms" {
   }
 
   ec2_instances = {
-    # Linux: CPU + memory + status-check only — disk usage/I-O-wait/network
-    # errors are Windows-only for now (see README).
+    # Linux: disk usage needs linux_disk_paths explicitly (checked live via
+    # `df -T <path>` first) — CPU/memory/status-check/diskio/network-errors
+    # need no extra config.
     checkout_host = {
-      instance_id = "i-0123456789abcdef0"
-      os_type     = "linux"
+      instance_id      = "i-0123456789abcdef0"
+      os_type           = "linux"
+      linux_disk_paths = [{ path = "/", fstype = "xfs" }]
     }
     app3_prod_d = {
       instance_id            = "i-0fad170ef80facf91"
@@ -179,7 +196,7 @@ module "cloudwatch_alarms" {
 | `sns_topic_arns` | SNS topic ARNs for alarm/OK actions by severity | `object` | n/a | yes |
 | `ecs_clusters` | ECS clusters/services to monitor | `map(object)` | n/a | yes |
 | `albs` | ALBs to monitor | `map(object)` | n/a | yes |
-| `ec2_instances` | EC2 instances to monitor (instance_id, os_type, disk_resources, enable_memory/diskio/network_errors) | `map(object)` | `{}` | no |
+| `ec2_instances` | EC2 instances to monitor (instance_id, os_type, disk_resources [Windows], linux_disk_paths [Linux], enable_memory/diskio/network_errors) | `map(object)` | `{}` | no |
 | `lambda_functions` | Lambda functions to monitor | `map(object)` | n/a | yes |
 | `ecs_cpu_warn_threshold_percent` | ECS CPU warn threshold | `number` | `70` | no |
 | `ecs_cpu_warn_evaluation_minutes` | ECS CPU warn evaluation window (minutes) | `number` | `10` | no |
@@ -222,6 +239,7 @@ module "cloudwatch_alarms" {
 | `ec2_network_errors_warn_threshold_count` | EC2 network errors warn threshold (count) | `number` | `1` | no |
 | `ec2_network_errors_crit_threshold_count` | EC2 network errors crit threshold (count) | `number` | `10` | no |
 | `ec2_network_adapter_name` | Windows perfmon "Network Interface" instance name | `string` | `"Amazon Elastic Network Adapter"` | no |
+| `ec2_linux_network_interface_name` | Linux network interface name for net_err_in/net_err_out | `string` | `"ens5"` | no |
 | `ec2_status_check_period_seconds` | EC2 status check evaluation window (seconds) | `number` | `60` | no |
 | `ec2_status_check_evaluation_periods` | EC2 status check number of periods | `number` | `2` | no |
 | `lambda_error_rate_period_seconds` | Lambda error rate evaluation window (seconds) | `number` | `300` | no |
