@@ -654,6 +654,13 @@ module "ec2_diskio_warn" {
     instance   = "_Total"
     } : {
     InstanceId = each.value.instance_id
+    # msi-terraform-cloudwatch-agent's Linux config sets totalcpu = true,
+    # which CWAgent publishes cpu_usage_iowait under a "cpu" = "cpu-total"
+    # dimension (confirmed live via `aws cloudwatch list-metrics`) -
+    # CloudWatch alarms require an exact dimension-set match, so omitting
+    # this left the alarm in INSUFFICIENT_DATA even once the metric itself
+    # existed.
+    cpu = "cpu-total"
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
@@ -684,6 +691,9 @@ module "ec2_diskio_crit" {
     instance   = "_Total"
     } : {
     InstanceId = each.value.instance_id
+    # See ec2_diskio_warn above - totalcpu = true publishes cpu_usage_iowait
+    # under cpu = "cpu-total", not just InstanceId alone.
+    cpu = "cpu-total"
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
