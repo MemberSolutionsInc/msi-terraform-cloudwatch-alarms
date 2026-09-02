@@ -50,10 +50,22 @@ variable "ecs_clusters" {
     (not a naming-convention prefix), and `services` lists the ECS service
     names running in that cluster that should get CPU/memory/restart alarms.
     Set `create = false` to skip a cluster without removing it from the map.
+
+    `cluster_arn` is required for the restart alarm specifically - ECS has
+    no native per-service restart-count metric (ECS/ContainerInsights
+    RestartCount is dimensioned by {TaskId, ContainerName, ClusterName,
+    TaskDefinitionFamily}, not {ClusterName, ServiceName}, and TaskId is a
+    new random value every restart), so this module alarms on the derived
+    metric msi-terraform-cloudwatch-metrics produces instead
+    (enable_ecs_service_restarts) - that metric is dimensioned by the raw
+    ClusterArn and the literal "service:<name>" group string, not a plain
+    cluster/service name pair. Get it from the sibling metrics module's
+    invocation in the same account, or `aws ecs describe-clusters`.
   EOT
   type = map(object({
     create       = bool
     cluster_name = string
+    cluster_arn  = string
     services     = list(string)
   }))
 }
@@ -239,6 +251,29 @@ variable "ecs_container_restart_crit_threshold" {
   description = "Number of container restarts within the window at which the critical alarm triggers."
   type        = number
   default     = 5
+}
+
+variable "ecs_restart_metric_namespace" {
+  description = <<-EOT
+    Namespace of the derived per-service ECS task-stop metric this module
+    alarms on (see ecs_clusters' cluster_arn note) - must match the value
+    the sibling msi-terraform-cloudwatch-metrics invocation in the same
+    account was given for ecs_service_restarts_metric_namespace. Not the
+    native ECS/ContainerInsights namespace.
+  EOT
+  type        = string
+  default     = "MSI/ECS"
+}
+
+variable "ecs_restart_metric_name" {
+  description = <<-EOT
+    Name of the derived per-service ECS task-stop metric this module alarms
+    on - must match the value the sibling msi-terraform-cloudwatch-metrics
+    invocation in the same account was given for
+    ecs_service_restarts_metric_name.
+  EOT
+  type        = string
+  default     = "ServiceTaskStopped"
 }
 
 ###############################################################################

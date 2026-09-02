@@ -5,6 +5,7 @@ locals {
       for service_name in cluster.services : {
         key          = "${cluster_key}-${service_name}"
         cluster_name = cluster.cluster_name
+        cluster_arn  = cluster.cluster_arn
         service_name = service_name
       }
     ] : []
@@ -202,6 +203,15 @@ module "ecs_memory_utilization_crit" {
 ###############################################################################
 # ECS container restarts - frequent restarts may indicate crashes or
 # misconfigurations.
+#
+# NOT the native ECS/ContainerInsights RestartCount - that metric is
+# dimensioned by {TaskId, ContainerName, ClusterName, TaskDefinitionFamily},
+# with no ServiceName dimension and an ephemeral TaskId that changes every
+# restart, so it can never be usefully alarmed on per-service (confirmed
+# live: every instance of this alarm sat in INSUFFICIENT_DATA regardless of
+# whether the service was actually running). Alarms instead on the derived
+# metric msi-terraform-cloudwatch-metrics produces
+# (enable_ecs_service_restarts) - see ecs_clusters' cluster_arn note.
 ###############################################################################
 
 module "ecs_container_restart_warn" {
@@ -211,8 +221,8 @@ module "ecs_container_restart_warn" {
 
   alarm_name          = "HighContainerRestarts-Warn-${each.value.service_name}"
   alarm_description   = "Triggers when container restarts for ${each.value.service_name} in cluster ${each.value.cluster_name} reach ${var.ecs_container_restart_warn_threshold} within ${var.ecs_container_restart_period_seconds / 60} minutes"
-  namespace           = "ECS/ContainerInsights"
-  metric_name         = "RestartCount"
+  namespace           = var.ecs_restart_metric_namespace
+  metric_name         = var.ecs_restart_metric_name
   statistic           = "Sum"
   period              = var.ecs_container_restart_period_seconds
   evaluation_periods  = 1
@@ -220,9 +230,13 @@ module "ecs_container_restart_warn" {
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "missing"
 
+  # Both values must match msi-terraform-cloudwatch-metrics' derived metric
+  # exactly - ClusterArn (the full ARN, not just the cluster name) and
+  # ServiceGroup as the literal "service:<name>" string, since metric filter
+  # dimensions can't string-manipulate the raw event field values.
   dimensions = {
-    ClusterName = each.value.cluster_name
-    ServiceName = each.value.service_name
+    ClusterArn   = each.value.cluster_arn
+    ServiceGroup = "service:${each.value.service_name}"
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
@@ -238,8 +252,8 @@ module "ecs_container_restart_crit" {
 
   alarm_name          = "HighContainerRestarts-Crit-${each.value.service_name}"
   alarm_description   = "Triggers when container restarts for ${each.value.service_name} in cluster ${each.value.cluster_name} reach ${var.ecs_container_restart_crit_threshold} within ${var.ecs_container_restart_period_seconds / 60} minutes"
-  namespace           = "ECS/ContainerInsights"
-  metric_name         = "RestartCount"
+  namespace           = var.ecs_restart_metric_namespace
+  metric_name         = var.ecs_restart_metric_name
   statistic           = "Sum"
   period              = var.ecs_container_restart_period_seconds
   evaluation_periods  = 1
@@ -248,8 +262,8 @@ module "ecs_container_restart_crit" {
   treat_missing_data  = "missing"
 
   dimensions = {
-    ClusterName = each.value.cluster_name
-    ServiceName = each.value.service_name
+    ClusterArn   = each.value.cluster_arn
+    ServiceGroup = "service:${each.value.service_name}"
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
