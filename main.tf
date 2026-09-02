@@ -93,7 +93,7 @@ module "ecs_cpu_utilization_warn" {
   version  = "5.7.1"
   for_each = local.ecs_services_map
 
-  alarm_name          = "HighCPUUtilization-Warn-${each.value.service_name}"
+  alarm_name          = "HighCPUUtilization-Warn-${each.value.cluster_name}-${each.value.service_name}"
   alarm_description   = "Triggers if ECS service ${each.value.service_name} in cluster ${each.value.cluster_name} exceeds ${var.ecs_cpu_warn_threshold_percent}% CPU for ${var.ecs_cpu_warn_evaluation_minutes} minutes"
   comparison_operator = "GreaterThanOrEqualToThreshold"
   metric_name         = "CPUUtilization"
@@ -120,7 +120,7 @@ module "ecs_cpu_utilization_crit" {
   version  = "5.7.1"
   for_each = local.ecs_services_map
 
-  alarm_name          = "HighCPUUtilization-Crit-${each.value.service_name}"
+  alarm_name          = "HighCPUUtilization-Crit-${each.value.cluster_name}-${each.value.service_name}"
   alarm_description   = "Triggers if ECS service ${each.value.service_name} in cluster ${each.value.cluster_name} exceeds ${var.ecs_cpu_crit_threshold_percent}% CPU for ${var.ecs_cpu_crit_evaluation_minutes} minutes"
   comparison_operator = "GreaterThanOrEqualToThreshold"
   metric_name         = "CPUUtilization"
@@ -151,7 +151,7 @@ module "ecs_memory_utilization_warn" {
   version  = "5.7.1"
   for_each = local.ecs_services_map
 
-  alarm_name          = "HighMemoryUtilization-Warn-${each.value.service_name}"
+  alarm_name          = "HighMemoryUtilization-Warn-${each.value.cluster_name}-${each.value.service_name}"
   alarm_description   = "Triggers if ECS service ${each.value.service_name} in cluster ${each.value.cluster_name} exceeds ${var.ecs_memory_warn_threshold_percent}% memory for ${var.ecs_memory_warn_evaluation_minutes} minutes"
   comparison_operator = "GreaterThanOrEqualToThreshold"
   metric_name         = "MemoryUtilization"
@@ -178,7 +178,7 @@ module "ecs_memory_utilization_crit" {
   version  = "5.7.1"
   for_each = local.ecs_services_map
 
-  alarm_name          = "HighMemoryUtilization-Crit-${each.value.service_name}"
+  alarm_name          = "HighMemoryUtilization-Crit-${each.value.cluster_name}-${each.value.service_name}"
   alarm_description   = "Triggers if ECS service ${each.value.service_name} in cluster ${each.value.cluster_name} exceeds ${var.ecs_memory_crit_threshold_percent}% memory for ${var.ecs_memory_crit_evaluation_minutes} minutes"
   comparison_operator = "GreaterThanOrEqualToThreshold"
   metric_name         = "MemoryUtilization"
@@ -219,7 +219,7 @@ module "ecs_container_restart_warn" {
   version  = "5.7.1"
   for_each = local.ecs_services_map
 
-  alarm_name          = "HighContainerRestarts-Warn-${each.value.service_name}"
+  alarm_name          = "HighContainerRestarts-Warn-${each.value.cluster_name}-${each.value.service_name}"
   alarm_description   = "Triggers when container restarts for ${each.value.service_name} in cluster ${each.value.cluster_name} reach ${var.ecs_container_restart_warn_threshold} within ${var.ecs_container_restart_period_seconds / 60} minutes"
   namespace           = var.ecs_restart_metric_namespace
   metric_name         = var.ecs_restart_metric_name
@@ -250,7 +250,7 @@ module "ecs_container_restart_crit" {
   version  = "5.7.1"
   for_each = local.ecs_services_map
 
-  alarm_name          = "HighContainerRestarts-Crit-${each.value.service_name}"
+  alarm_name          = "HighContainerRestarts-Crit-${each.value.cluster_name}-${each.value.service_name}"
   alarm_description   = "Triggers when container restarts for ${each.value.service_name} in cluster ${each.value.cluster_name} reach ${var.ecs_container_restart_crit_threshold} within ${var.ecs_container_restart_period_seconds / 60} minutes"
   namespace           = var.ecs_restart_metric_namespace
   metric_name         = var.ecs_restart_metric_name
