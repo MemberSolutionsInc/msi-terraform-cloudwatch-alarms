@@ -253,6 +253,39 @@ variable "ecs_container_restart_crit_threshold" {
   default     = 5
 }
 
+variable "ecs_container_restart_sustained_enabled" {
+  description = <<-EOT
+    Also create SustainedContainerRestarts-Warn/Crit alarms for every
+    service in var.ecs_clusters. Unlike the burst alarms above
+    (evaluation_periods = 1 - only catches a spike within one window), these
+    require ecs_container_restart_sustained_threshold restarts in EVERY one
+    of several consecutive windows, catching a service crash-looping at a
+    steady rate too low to ever cross the burst threshold in a single
+    window. Default off since it applies to every service in the module
+    invocation, not a single one - enable per-account once desired.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "ecs_container_restart_sustained_threshold" {
+  description = "Restarts required in EVERY window of the sustained evaluation period (both warn and crit) for the sustained alarms to trigger. Lower than the burst thresholds by design - this is about duration, not volume."
+  type        = number
+  default     = 2
+}
+
+variable "ecs_container_restart_sustained_warn_evaluation_periods" {
+  description = "Number of consecutive ecs_container_restart_period_seconds windows the sustained-restart warning alarm requires to all breach before triggering."
+  type        = number
+  default     = 3
+}
+
+variable "ecs_container_restart_sustained_crit_evaluation_periods" {
+  description = "Number of consecutive ecs_container_restart_period_seconds windows the sustained-restart critical alarm requires to all breach before triggering - longer than the warn tier, since this represents the same crash loop having gone unresolved for even longer."
+  type        = number
+  default     = 6
+}
+
 variable "ecs_restart_metric_namespace" {
   description = <<-EOT
     Namespace of the derived per-service ECS task-stop metric this module

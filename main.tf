@@ -273,6 +273,80 @@ module "ecs_container_restart_crit" {
 }
 
 ###############################################################################
+# ECS container restarts - sustained (low-and-slow crash loop). The burst
+# alarms above use evaluation_periods = 1, so they only catch a spike within
+# a single window - a service crashing at a steady rate just under that
+# threshold (e.g. 3-4 restarts per 10-minute window, forever) never crosses
+# it and sits silently broken. Confirmed live: rnd-mcp-smoke-qa crash-looped
+# continuously for 24+ hours at ~18-19 restarts/hour (~3/10min, warn
+# threshold is 6/10min) without a single one of the 6 existing alarms
+# firing.
+#
+# datapoints_to_alarm == evaluation_periods (not M-of-N) is the point: it
+# requires EVERY one of the last N windows to breach, which a normal
+# redeploy (a one-off restart or two, then quiet) won't do, but a service
+# that's still crashing 30-60 minutes later will. Opt-in per module
+# invocation (default off) since it applies uniformly to every service in
+# var.ecs_clusters, not just one.
+###############################################################################
+
+module "ecs_container_restart_sustained_warn" {
+  source   = "terraform-aws-modules/cloudwatch/aws//modules/metric-alarm"
+  version  = "5.7.1"
+  for_each = var.ecs_container_restart_sustained_enabled ? local.ecs_services_map : {}
+
+  alarm_name          = "SustainedContainerRestarts-Warn-${each.value.cluster_name}-${each.value.service_name}"
+  alarm_description   = "Triggers when ${each.value.service_name} in cluster ${each.value.cluster_name} has restarted at least ${var.ecs_container_restart_sustained_threshold} times in every one of the last ${var.ecs_container_restart_sustained_warn_evaluation_periods} consecutive ${var.ecs_container_restart_period_seconds / 60}-minute windows (${var.ecs_container_restart_sustained_warn_evaluation_periods * var.ecs_container_restart_period_seconds / 60} minutes sustained) - a steady crash loop too slow to trip the burst restart alarm."
+  namespace           = var.ecs_restart_metric_namespace
+  metric_name         = var.ecs_restart_metric_name
+  statistic           = "Sum"
+  period              = var.ecs_container_restart_period_seconds
+  evaluation_periods  = var.ecs_container_restart_sustained_warn_evaluation_periods
+  datapoints_to_alarm = var.ecs_container_restart_sustained_warn_evaluation_periods
+  threshold           = var.ecs_container_restart_sustained_threshold
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    ClusterArn   = each.value.cluster_arn
+    ServiceGroup = "service:${each.value.service_name}"
+  }
+
+  alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
+  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+
+  tags = local.tags_warn
+}
+
+module "ecs_container_restart_sustained_crit" {
+  source   = "terraform-aws-modules/cloudwatch/aws//modules/metric-alarm"
+  version  = "5.7.1"
+  for_each = var.ecs_container_restart_sustained_enabled ? local.ecs_services_map : {}
+
+  alarm_name          = "SustainedContainerRestarts-Crit-${each.value.cluster_name}-${each.value.service_name}"
+  alarm_description   = "Triggers when ${each.value.service_name} in cluster ${each.value.cluster_name} has restarted at least ${var.ecs_container_restart_sustained_threshold} times in every one of the last ${var.ecs_container_restart_sustained_crit_evaluation_periods} consecutive ${var.ecs_container_restart_period_seconds / 60}-minute windows (${var.ecs_container_restart_sustained_crit_evaluation_periods * var.ecs_container_restart_period_seconds / 60} minutes sustained) - same crash loop as the warn tier, still not resolved."
+  namespace           = var.ecs_restart_metric_namespace
+  metric_name         = var.ecs_restart_metric_name
+  statistic           = "Sum"
+  period              = var.ecs_container_restart_period_seconds
+  evaluation_periods  = var.ecs_container_restart_sustained_crit_evaluation_periods
+  datapoints_to_alarm = var.ecs_container_restart_sustained_crit_evaluation_periods
+  threshold           = var.ecs_container_restart_sustained_threshold
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    ClusterArn   = each.value.cluster_arn
+    ServiceGroup = "service:${each.value.service_name}"
+  }
+
+  alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
+  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+
+  tags = local.tags_crit
+}
+
+###############################################################################
 # ALB 5xx errors - emitted as a raw count metric upstream, so thresholds are
 # counts per window (see variables.tf) rather than a rate.
 ###############################################################################
