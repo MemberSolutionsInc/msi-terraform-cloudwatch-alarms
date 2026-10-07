@@ -30,7 +30,17 @@ variable "tags" {
 ###############################################################################
 
 variable "sns_topic_arns" {
-  description = "SNS topic ARNs used for alarm notification (ALARM/OK) actions, by severity."
+  description = <<-EOT
+    SNS topic ARNs used for alarm notification, by severity.
+
+    As of v0.3.0, alarms only notify on the ALARM transition - ok_actions is
+    always empty. Teams/ADO are push-only notification channels, not an
+    auto-resolving system like PagerDuty, so a recovery message isn't a
+    signal anyone acts on; it was pure noise (including pinging on-call
+    outside hours for something that already self-resolved). critical_ok_arn
+    and warning_ok_arn are kept in this type only so existing callers don't
+    need to change their sns_topic_arns object - they're accepted but unused.
+  EOT
   type = object({
     critical_alarm_arn = string
     critical_ok_arn    = string

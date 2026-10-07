@@ -110,7 +110,7 @@ module "ecs_cpu_utilization_warn" {
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_warn
 }
@@ -137,7 +137,7 @@ module "ecs_cpu_utilization_crit" {
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_crit
 }
@@ -168,7 +168,7 @@ module "ecs_memory_utilization_warn" {
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_warn
 }
@@ -195,7 +195,7 @@ module "ecs_memory_utilization_crit" {
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_crit
 }
@@ -240,7 +240,7 @@ module "ecs_container_restart_warn" {
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_warn
 }
@@ -267,7 +267,7 @@ module "ecs_container_restart_crit" {
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_crit
 }
@@ -313,7 +313,7 @@ module "ecs_container_restart_sustained_warn" {
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_warn
 }
@@ -341,7 +341,7 @@ module "ecs_container_restart_sustained_crit" {
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_crit
 }
@@ -372,7 +372,7 @@ module "alb_5xx_warn" {
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_warn
 }
@@ -398,7 +398,7 @@ module "alb_5xx_crit" {
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_crit
 }
@@ -428,7 +428,7 @@ module "alb_latency_warn" {
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_warn
 }
@@ -454,7 +454,7 @@ module "alb_latency_crit" {
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_crit
 }
@@ -487,7 +487,7 @@ module "alb_unhealthy_targets_warn" {
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_warn
 }
@@ -514,7 +514,7 @@ module "alb_healthy_targets_crit" {
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_crit
 }
@@ -545,7 +545,7 @@ module "ec2_cpu_utilization_warn" {
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_warn
 }
@@ -571,7 +571,7 @@ module "ec2_cpu_utilization_crit" {
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_crit
 }
@@ -606,7 +606,7 @@ module "ec2_memory_utilization_warn" {
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_warn
 }
@@ -635,7 +635,7 @@ module "ec2_memory_utilization_crit" {
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_crit
 }
@@ -674,7 +674,7 @@ module "ec2_disk_usage_warn" {
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_warn
 }
@@ -706,7 +706,7 @@ module "ec2_disk_usage_crit" {
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_crit
 }
@@ -752,7 +752,7 @@ module "ec2_diskio_warn" {
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_warn
 }
@@ -785,7 +785,7 @@ module "ec2_diskio_crit" {
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_crit
 }
@@ -853,7 +853,7 @@ module "ec2_network_errors_warn" {
   ]
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_warn
 }
@@ -914,7 +914,7 @@ module "ec2_network_errors_crit" {
   ]
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_crit
 }
@@ -946,7 +946,7 @@ module "ec2_status_check_failed" {
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+  ok_actions    = []
 
   tags = var.tags
 }
@@ -1002,7 +1002,7 @@ module "lambda_error_rate_warn" {
   ]
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_warn
 }
@@ -1053,7 +1053,7 @@ module "lambda_error_rate_crit" {
   ]
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_crit
 }
@@ -1083,7 +1083,7 @@ module "lambda_duration_warn" {
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_warn
 }
@@ -1109,7 +1109,7 @@ module "lambda_duration_crit" {
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_crit
 }
@@ -1139,7 +1139,7 @@ module "lambda_throttles" {
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+  ok_actions    = []
 
   tags = var.tags
 }
@@ -1169,7 +1169,7 @@ module "lambda_concurrency_warn" {
   }
 
   alarm_actions = [var.sns_topic_arns.warning_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.warning_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_warn
 }
@@ -1195,7 +1195,7 @@ module "lambda_concurrency_crit" {
   }
 
   alarm_actions = [var.sns_topic_arns.critical_alarm_arn]
-  ok_actions    = [var.sns_topic_arns.critical_ok_arn]
+  ok_actions    = []
 
   tags = local.tags_crit
 }
